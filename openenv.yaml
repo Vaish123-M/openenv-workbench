@@ -1,0 +1,26 @@
+schema_version: 1
+name: openenv-workbench
+description: Real-world task simulation environment for evaluating AI agents on email triage, data cleaning, and customer support writing.
+entrypoint: environment.app:app
+api:
+  type: fastapi
+  reset: /reset
+  step: /step
+  state: /state
+tasks:
+  - name: email_classification
+    difficulty: easy
+    objective: Classify incoming emails as spam or important and justify the decision.
+  - name: data_cleaning
+    difficulty: medium
+    objective: Remove duplicates and normalize messy customer records into a clean canonical table.
+  - name: customer_support_reply
+    difficulty: hard
+    objective: Draft a helpful customer support reply that addresses the issue, follows policy, and keeps a professional tone.
+difficulty_levels:
+  - easy
+  - medium
+  - hard
+constraints:
+  max_cpus: 2
+  max_memory_gb: 8
