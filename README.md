@@ -123,6 +123,22 @@ termination, invalid actions, agent/environment errors, missing observations,
 and cooperative timeout checks. Timeout checks occur between calls; a call
 already in progress cannot be forcefully interrupted in this phase.
 
+## Benchmarks
+
+`BenchmarkRunner` executes named tasks through the existing `AgentRunner`,
+records every `RunResult`, and aggregates success rate, score, steps,
+execution time, failures, and timeouts. It supports repeated runs, filters,
+and JSON/CSV export. A minimal CLI is available:
+
+```bash
+python -m benchmark.cli run --environment openenv \
+  --tasks email_classification --agent mock --runs 2 \
+  --actions mock-actions.json --output-json results.json --output-csv results.csv
+```
+
+The actions file is a JSON object keyed by task ID, with each value containing
+the action objects supplied to `MockAgent`.
+
 ## Coding Environment
 
 The Phase 3 coding environment is available as the registered `coding`
