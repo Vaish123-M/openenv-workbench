@@ -70,6 +70,17 @@ curl -X POST http://localhost:8000/step -H "Content-Type: application/json" -d "
 curl http://localhost:8000/state
 ```
 
+### Controlled Agent Run
+
+The internal `/runs` endpoint only accepts registered environment and agent
+names. It does not import or execute caller-supplied classes or code.
+
+```bash
+curl -X POST http://localhost:8000/runs \
+  -H "Content-Type: application/json" \
+  -d "{\"environment\":\"openenv\",\"task\":\"email_classification\",\"agent\":\"mock\",\"max_steps\":3,\"actions\":[{\"content\":\"{\\\"label\\\":\\\"spam\\\",\\\"reason\\\":\\\"Verify suspension card click immediately form.\\\"}\",\"format\":\"json\"}]}"
+```
+
 ## Baseline Inference
 
 `inference.py` uses an OpenAI-compatible client and reads these environment variables:
