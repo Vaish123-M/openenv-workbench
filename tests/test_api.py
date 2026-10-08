@@ -55,6 +55,35 @@ def test_run_endpoint_rejects_unknown_agent() -> None:
     assert "Unknown registered agent" in response.json()["detail"]
 
 
+def test_result_retrieval_endpoints_return_persisted_run(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("OPENENV_RESULTS_DB", str(tmp_path / "api-results.db"))
+    from environment.api import app
+    from fastapi.testclient import TestClient
+
+    client = TestClient(app)
+    response = client.post(
+        "/runs",
+        json={
+            "agent": "mock",
+            "actions": [
+                {
+                    "content": '{"label": "spam", "reason": "Verify suspension card click immediately form."}',
+                    "format": "json",
+                }
+            ],
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+
+    stored = client.get(f"/results/runs/{payload['run_id']}")
+    assert stored.status_code == 200
+    assert stored.json()["trajectory"]
+    by_agent = client.get("/results/agents/mock")
+    assert by_agent.status_code == 200
+    assert any(item["run_id"] == payload["run_id"] for item in by_agent.json())
+
+
 def test_run_endpoint_requires_actions_for_mock_agent() -> None:
     response = client.post("/runs", json={"agent": "mock"})
 

@@ -207,6 +207,29 @@ other agents. Comparison results can be exported with
 `BenchmarkRunner.export_comparison_json` and
 `BenchmarkRunner.export_comparison_csv`.
 
+## Persistent results
+
+`storage.ResultRepository` provides lightweight SQLite persistence without
+coupling database code to `AgentRunner` or environments:
+
+```python
+from storage import ResultRepository
+
+repository = ResultRepository("openenv_results.db")
+benchmark = BenchmarkRunner(repository=repository).run(config)
+stored = repository.get_benchmark(benchmark.benchmark_run_id)
+run = repository.get_run(benchmark.records[0].result.run_id)
+```
+
+The repository stores benchmark metadata, individual runs, model/agent
+identity, metrics, grading, trajectories, failure analysis, and termination
+reasons. The database schema is initialized automatically and adds missing
+local-development columns on startup. API runs are persisted to the same
+database; set `OPENENV_RESULTS_DB` to choose its path. Read-only retrieval
+routes are available at `/results/benchmarks/{id}`, `/results/runs/{id}`,
+`/results/agents/{agent}`, and
+`/results/environments/{environment}?task={task_id}`.
+
 The CLI supports the same flow:
 
 ```bash

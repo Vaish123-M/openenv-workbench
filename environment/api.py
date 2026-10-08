@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import Any, Callable, Dict
 
 from fastapi import FastAPI, HTTPException
@@ -38,6 +39,16 @@ class RunRequest(BaseModel):
 
 app = FastAPI(title="openenv-workbench", version="1.0.0")
 env = OpenEnv()
+_result_repositories: dict[str, Any] = {}
+
+
+def _results_repository() -> Any:
+    from storage import ResultRepository
+
+    path = os.getenv("OPENENV_RESULTS_DB", "openenv_results.db")
+    if path not in _result_repositories:
+        _result_repositories[path] = ResultRepository(path)
+    return _result_repositories[path]
 def _coding_environment() -> Any:
     from coding import CodingEnvironment
 
@@ -96,10 +107,38 @@ def run_agent(request: RunRequest) -> Any:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     run_environment = environment_factory()
-    return AgentRunner().run(
+    result = AgentRunner().run(
         environment=run_environment,
         agent=agent,
         task_id=request.task,
         max_steps=request.max_steps,
         timeout=request.timeout,
     )
+    _results_repository().save_run(result, agent=request.agent)
+    return result
+
+
+@app.get("/results/benchmarks/{benchmark_run_id}")
+def get_benchmark_result(benchmark_run_id: str) -> Any:
+    result = _results_repository().get_benchmark(benchmark_run_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Benchmark run not found")
+    return result
+
+
+@app.get("/results/runs/{run_id}")
+def get_task_result(run_id: str) -> Any:
+    result = _results_repository().get_run(run_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Task run not found")
+    return result
+
+
+@app.get("/results/agents/{agent}")
+def get_agent_results(agent: str) -> list[Any]:
+    return _results_repository().results_by_agent(agent)
+
+
+@app.get("/results/environments/{environment}")
+def get_environment_results(environment: str, task: str | None = None) -> list[Any]:
+    return _results_repository().results_by_environment_task(environment, task)

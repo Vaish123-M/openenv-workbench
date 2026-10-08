@@ -51,14 +51,19 @@ class BenchmarkRunner:
         self,
         environment_factories: dict[str, EnvironmentFactory] | None = None,
         agent_factories: dict[str, AgentFactory] | None = None,
+        repository: Any | None = None,
     ) -> None:
         self.environment_factories = environment_factories or _default_environment_factories()
         self._agent_factories = agent_factories
+        self.repository = repository
 
     def run(self, config: BenchmarkConfig) -> BenchmarkResult:
         if len(config.selected_agents) != 1:
             raise ValueError("run() requires exactly one configured agent; use run_comparison()")
-        return self._run_for_agents(config, config.selected_agents)[0]
+        result = self._run_for_agents(config, config.selected_agents)[0]
+        if self.repository is not None:
+            self.repository.save_benchmark(result)
+        return result
 
     def run_comparison(self, config: BenchmarkConfig) -> ComparisonResult:
         """Run identical benchmark cases for every configured agent."""
@@ -72,7 +77,7 @@ class BenchmarkRunner:
             for result in results
             for record in result.records
         ]
-        return ComparisonResult(
+        comparison = ComparisonResult(
             benchmark_run_id=benchmark_run_id,
             config=config,
             records=records,
@@ -89,6 +94,9 @@ class BenchmarkRunner:
                 for agent in agents
             },
         )
+        if self.repository is not None:
+            self.repository.save_comparison(comparison)
+        return comparison
 
     def _run_for_agents(
         self, config: BenchmarkConfig, agents: list[str]
