@@ -17,6 +17,11 @@ class FakeProvider:
         return self.response
 
 
+class MetadataProvider(FakeProvider):
+    model = "test-model"
+    last_token_usage = {"prompt_tokens": 8, "completion_tokens": 5, "total_tokens": 13}
+
+
 def test_llm_agent_returns_json_action_and_runs_environment() -> None:
     provider = FakeProvider(
         '{"label": "spam", "reason": "Verify suspension card click immediately form."}'
@@ -29,6 +34,25 @@ def test_llm_agent_returns_json_action_and_runs_environment() -> None:
     assert result.steps == 1
     assert result.final_action.format == "json"
     assert provider.prompts
+
+
+def test_llm_metadata_is_included_in_run_metrics() -> None:
+    result = AgentRunner().run(
+        OpenEnv(),
+        LLMBackedAgent(
+            MetadataProvider(
+                '{"label": "spam", "reason": "Verify suspension card click immediately form."}'
+            )
+        ),
+        task_id="email_classification",
+    )
+
+    assert result.metrics.model_name == "test-model"
+    assert result.metrics.token_usage == {
+        "prompt_tokens": 8,
+        "completion_tokens": 5,
+        "total_tokens": 13,
+    }
 
 
 def test_llm_agent_accepts_explicit_action_envelope() -> None:

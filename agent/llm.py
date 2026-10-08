@@ -44,6 +44,7 @@ class OpenAIProvider:
         client: Any | None = None,
     ) -> None:
         self.model = model or os.getenv("MODEL_NAME", "gpt-4o-mini")
+        self.last_token_usage: dict[str, int] | None = None
         if client is not None:
             self._client = client
             return
@@ -68,6 +69,7 @@ class OpenAIProvider:
                 max_tokens=400,
             )
             content = response.choices[0].message.content
+            self.last_token_usage = _token_usage(response)
         except Exception as exc:
             raise LLMProviderError(f"LLM provider request failed: {type(exc).__name__}") from exc
 
@@ -87,6 +89,7 @@ class AsyncOpenAIProvider:
         client: Any | None = None,
     ) -> None:
         self.model = model or os.getenv("MODEL_NAME", "gpt-4o-mini")
+        self.last_token_usage: dict[str, int] | None = None
         if client is not None:
             self._client = client
             return
@@ -110,6 +113,7 @@ class AsyncOpenAIProvider:
                 max_tokens=400,
             )
             content = response.choices[0].message.content
+            self.last_token_usage = _token_usage(response)
         except Exception as exc:
             raise LLMProviderError(f"LLM provider request failed: {type(exc).__name__}") from exc
         if not isinstance(content, str) or not content.strip():
@@ -119,6 +123,18 @@ class AsyncOpenAIProvider:
 
 def _expected_action_format(observation: Observation) -> str:
     return "json" if "json" in observation.submission_format.lower() else "text"
+
+
+def _token_usage(response: Any) -> dict[str, int] | None:
+    usage = getattr(response, "usage", None)
+    if usage is None:
+        return None
+    values: dict[str, int] = {}
+    for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+        value = getattr(usage, key, None)
+        if isinstance(value, int):
+            values[key] = value
+    return values or None
 
 
 class LLMBackedAgent:
@@ -131,10 +147,13 @@ class LLMBackedAgent:
     ) -> None:
         self._provider = provider
         self._prompt_builder = prompt_builder
+        self.model_name = getattr(provider, "model", None)
+        self.last_token_usage: dict[str, int] | None = None
 
     def observe(self, observation: Observation) -> Action:
         prompt = self._prompt_builder(observation)
         response = self._provider.complete(prompt)
+        self.last_token_usage = getattr(self._provider, "last_token_usage", None)
         return self._to_action(response, observation)
 
     @staticmethod
@@ -166,7 +185,10 @@ class AsyncLLMBackedAgent:
     ) -> None:
         self._provider = provider
         self._prompt_builder = prompt_builder
+        self.model_name = getattr(provider, "model", None)
+        self.last_token_usage: dict[str, int] | None = None
 
     async def aobserve(self, observation: Observation) -> Action:
         response = await self._provider.acomplete(self._prompt_builder(observation))
+        self.last_token_usage = getattr(self._provider, "last_token_usage", None)
         return LLMBackedAgent._to_action(response, observation)

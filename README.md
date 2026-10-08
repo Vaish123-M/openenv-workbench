@@ -130,6 +130,11 @@ overall timeout expires, and external task cancellation is propagated after
 best-effort cleanup. Synchronous calls used through `run_async` remain
 non-preemptible because Python cannot safely interrupt a blocking call.
 
+Each `RunResult` also includes `metrics` and `grading`. Metrics report observed
+step counts, failures, invalid actions, elapsed time, timeout status, and
+provider model/token usage when available. Grading is populated from the
+environment's existing `score`, `reward`, `penalty`, and `breakdown` fields.
+
 The script logs exactly in this format for each task:
 
 ```text

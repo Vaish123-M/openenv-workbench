@@ -11,7 +11,7 @@ from pydantic import ValidationError
 from environment.models import Action
 
 from .interface import Agent, AsyncAgent
-from .models import RunError, RunResult
+from .models import ExecutionMetrics, GradingSummary, RunError, RunResult
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +61,7 @@ class AgentRunner:
             task_id=task_id,
             termination_reason="unexpected_termination",
         )
+        result._started_at = started
 
         if self._timed_out(started, timeout):
             return self._finish(result, "timeout")
@@ -87,6 +88,7 @@ class AgentRunner:
 
             try:
                 action = agent.observe(observation)
+                self._record_agent_metadata(result, agent)
             except Exception as exc:
                 return self._failure(result, "agent_error", exc, "Agent failed while choosing an action")
 
@@ -109,6 +111,7 @@ class AgentRunner:
 
             result.steps += 1
             result.info = info
+            self._record_grading(result, info)
             if observation is None:
                 return self._failure(
                     result,
@@ -145,6 +148,7 @@ class AgentRunner:
             task_id=task_id,
             termination_reason="unexpected_termination",
         )
+        result._started_at = started
         try:
             try:
                 observation = await self._call_with_deadline(
@@ -174,6 +178,7 @@ class AgentRunner:
                     action = await self._call_with_deadline(
                         lambda: observer(observation), started, timeout, "agent"
                     )
+                    self._record_agent_metadata(result, agent)
                 except _OperationTimeout as exc:
                     return self._failure(result, "timeout", exc, "Agent call timed out")
                 except Exception as exc:
@@ -198,6 +203,7 @@ class AgentRunner:
 
                 result.steps += 1
                 result.info = info
+                self._record_grading(result, info)
                 if observation is None:
                     return self._failure(
                         result,
@@ -276,14 +282,49 @@ class AgentRunner:
     @staticmethod
     def _finish(result: RunResult, reason: str) -> RunResult:
         result.termination_reason = reason  # type: ignore[assignment]
+        AgentRunner._finalize_metrics(result, reason)
         return result
 
     @staticmethod
     def _failure(result: RunResult, reason: str, exc: Exception, log_message: str) -> RunResult:
         result.error = _error(exc)
         result.termination_reason = reason  # type: ignore[assignment]
+        result.metrics.failed_steps += 1
+        if reason == "invalid_action":
+            result.metrics.invalid_action_count += 1
+        elif reason == "agent_error":
+            result.metrics.agent_errors.append(result.error)
+        elif reason == "environment_error":
+            result.metrics.environment_errors.append(result.error)
         logger.error("%s: %s", log_message, result.error.error_type)
+        AgentRunner._finalize_metrics(result, reason)
         return result
+
+    @staticmethod
+    def _record_grading(result: RunResult, info: dict[str, Any]) -> None:
+        result.grading = GradingSummary(
+            score=info.get("score"),
+            reward=info.get("reward"),
+            penalty=info.get("penalty"),
+            breakdown=info.get("breakdown", {}),
+        )
+
+    @staticmethod
+    def _record_agent_metadata(result: RunResult, agent: Any) -> None:
+        model_name = getattr(agent, "model_name", None)
+        if model_name:
+            result.metrics.model_name = model_name
+        token_usage = getattr(agent, "last_token_usage", None)
+        if isinstance(token_usage, dict):
+            result.metrics.token_usage = {
+                key: value for key, value in token_usage.items() if isinstance(value, int)
+            }
+
+    @staticmethod
+    def _finalize_metrics(result: RunResult, reason: str) -> None:
+        result.metrics.total_steps = result.steps
+        result.metrics.elapsed_time = max(time.monotonic() - result._started_at, 0.0)
+        result.metrics.timed_out = reason == "timeout"
 
 
 class _OperationTimeout(TimeoutError):
