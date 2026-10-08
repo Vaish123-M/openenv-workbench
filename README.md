@@ -123,6 +123,14 @@ termination, invalid actions, agent/environment errors, missing observations,
 and cooperative timeout checks. Timeout checks occur between calls; a call
 already in progress cannot be forcefully interrupted in this phase.
 
+## Coding Environment
+
+The Phase 3 coding environment is available as the registered `coding`
+environment for controlled runs. It creates a temporary task workspace and
+accepts only JSON tool actions: `list_files`, `read_file`, `edit_file`,
+`run_tests`, and `submit`. Paths are restricted to that workspace and tests
+run through a fixed Python/pytest invocation with a timeout.
+
 An LLM-backed agent can use any provider implementing `complete(prompt) -> str`.
 `OpenAIProvider` is an OpenAI-compatible implementation that reads credentials
 from `OPENAI_API_KEY` or `HF_TOKEN`:

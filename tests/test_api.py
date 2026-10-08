@@ -67,3 +67,28 @@ def test_existing_reset_endpoint_is_unchanged() -> None:
 
     assert response.status_code == 200
     assert response.json()["task_name"] == "email_classification"
+
+
+def test_run_endpoint_executes_registered_coding_environment() -> None:
+    response = client.post(
+        "/runs",
+        json={
+            "environment": "coding",
+            "task": "fix_addition",
+            "agent": "mock",
+            "max_steps": 4,
+            "actions": [
+                {
+                    "content": '{"tool":"edit_file","path":"solution.py","content":"def add_numbers(first: int, second: int) -> int:\\n    return first + second\\n"}',
+                    "format": "json",
+                },
+                {"content": '{"tool":"submit"}', "format": "json"},
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["completed"] is True
+    assert result["task_id"] == "fix_addition"
+    assert result["grading"]["score"] == 1.0

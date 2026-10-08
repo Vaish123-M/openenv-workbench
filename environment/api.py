@@ -38,7 +38,16 @@ class RunRequest(BaseModel):
 
 app = FastAPI(title="openenv-workbench", version="1.0.0")
 env = OpenEnv()
-ENVIRONMENT_FACTORIES: dict[str, Callable[[], OpenEnv]] = {"openenv": OpenEnv}
+def _coding_environment() -> Any:
+    from coding import CodingEnvironment
+
+    return CodingEnvironment()
+
+
+ENVIRONMENT_FACTORIES: dict[str, Callable[[], Any]] = {
+    "openenv": OpenEnv,
+    "coding": _coding_environment,
+}
 
 
 def _build_agent(request: RunRequest) -> Any:

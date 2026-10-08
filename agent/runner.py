@@ -104,6 +104,13 @@ class AgentRunner:
             try:
                 step_result = environment.step(action)
                 observation, _, done, info = self._unpack_step(step_result)
+                if self._is_invalid_environment_action(info):
+                    return self._failure(
+                        result,
+                        "invalid_action",
+                        ValueError(info["result"].get("error", "environment rejected action")),
+                        "Environment rejected an invalid action",
+                    )
             except ValueError as exc:
                 return self._failure(result, "unexpected_termination", exc, "Environment returned an invalid step result")
             except Exception as exc:
@@ -194,6 +201,13 @@ class AgentRunner:
                     observation, _, done, info = await self._call_with_deadline(
                         lambda: environment.step(action), started, timeout, "environment"
                     )
+                    if self._is_invalid_environment_action(info):
+                        return self._failure(
+                            result,
+                            "invalid_action",
+                            ValueError(info["result"].get("error", "environment rejected action")),
+                            "Environment rejected an invalid action",
+                        )
                 except _OperationTimeout as exc:
                     return self._failure(result, "timeout", exc, "Environment step timed out")
                 except ValueError as exc:
@@ -308,6 +322,11 @@ class AgentRunner:
             penalty=info.get("penalty"),
             breakdown=info.get("breakdown", {}),
         )
+
+    @staticmethod
+    def _is_invalid_environment_action(info: dict[str, Any]) -> bool:
+        nested = info.get("result")
+        return isinstance(nested, dict) and nested.get("invalid_action") is True
 
     @staticmethod
     def _record_agent_metadata(result: RunResult, agent: Any) -> None:
