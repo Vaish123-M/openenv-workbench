@@ -87,6 +87,31 @@ set HF_TOKEN=your_token_here
 python inference.py
 ```
 
+## Agent Runner
+
+Phase 1 includes a reusable runner for executing any agent that implements
+`observe(observation) -> action` against the existing `OpenEnv` environment.
+The deterministic `MockAgent` is useful for local checks without an LLM:
+
+```python
+from agent import AgentRunner, MockAgent
+from environment.core import OpenEnv
+
+agent = MockAgent([
+    {
+        "content": "{\"label\": \"spam\", \"reason\": \"Urgent request for card details.\"}",
+        "format": "json",
+    }
+])
+result = AgentRunner().run(OpenEnv(), agent, task_id="email_classification", max_steps=3)
+print(result.model_dump())
+```
+
+The runner returns a structured `RunResult` for task completion, max-step
+termination, invalid actions, agent/environment errors, missing observations,
+and cooperative timeout checks. Timeout checks occur between calls; a call
+already in progress cannot be forcefully interrupted in this phase.
+
 The script logs exactly in this format for each task:
 
 ```text
@@ -104,4 +129,3 @@ final_score: <value>
 ## Validation
 
 The repository is structured to be compatible with `openenv validate` by exposing the required OpenEnv methods, deterministic task graders, and a FastAPI API surface.
-
