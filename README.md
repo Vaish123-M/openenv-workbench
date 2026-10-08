@@ -17,16 +17,45 @@ observable and testable without requiring an LLM for the default test suite.
 
 ```mermaid
 flowchart TD
-    UI[React dashboard] --> API[FastAPI read/run API]
-    CLI[Benchmark CLI] --> BR[BenchmarkRunner]
-    BR --> AR[AgentRunner]
+    subgraph Clients
+        UI[React dashboard]
+        CLI[Benchmark CLI]
+        PY[Python callers]
+    end
+
+    subgraph Service["FastAPI service"]
+        API[Controlled run and result API]
+        AUTH[Optional HTTP Basic Auth]
+    end
+
+    subgraph Evaluation["Evaluation engine"]
+        BR[BenchmarkRunner]
+        AR[AgentRunner]
+        AG[Registered agent]
+        ENV[Registered environment]
+        GRADER[Deterministic grader]
+        RESULT[RunResult]
+    end
+
+    subgraph Data["Result storage"]
+        REPO[ResultRepository]
+        DB[(SQLite)]
+    end
+
+    UI --> API
+    CLI --> BR
+    PY --> AR
+    AUTH -. protects .-> API
     API --> AR
-    AR --> AG[Registered agent]
-    AR --> ENV[Registered environment]
-    ENV --> G[Deterministic grader]
-    AR --> RR[ResultRepository]
-    RR --> DB[(SQLite)]
-    AR --> R[RunResult: metrics, trajectory, failure analysis]
+    BR --> AR
+    AR --> AG
+    AR --> ENV
+    ENV --> GRADER
+    AR --> RESULT
+    RESULT --> REPO
+    REPO --> DB
+    API --> REPO
+    UI -. reads JSON results .-> API
 ```
 
 The core loop is:
@@ -40,6 +69,56 @@ environment.reset()
   -> new observation/reward/info
   -> repeat until completion, limit, timeout, or error
 ```
+
+### Detailed interaction sequence
+
+```mermaid
+sequenceDiagram
+    participant Caller as Dashboard / CLI / Python
+    participant Runner as AgentRunner
+    participant Agent
+    participant Env as Environment
+    participant Grader
+    participant Store as SQLite repository
+
+    Caller->>Runner: run(environment, agent, task, limits)
+    Runner->>Env: reset(task)
+    Env-->>Runner: observation
+    loop Until completion, max steps, timeout, or error
+        Runner->>Agent: observe(observation)
+        Agent-->>Runner: action
+        Runner->>Runner: validate action and record trajectory
+        Runner->>Env: step(action)
+        Env->>Grader: grade action/output
+        Grader-->>Env: score and breakdown
+        Env-->>Runner: observation, reward, done, info
+    end
+    Runner->>Store: persist result, trajectory, metrics, failure analysis
+    Runner-->>Caller: structured RunResult
+```
+
+## What this project does in practical terms
+
+OpenEnv Workbench is an evaluation harness rather than a single chatbot. It
+lets you place different agents inside the same controlled tasks and measure
+their behavior consistently:
+
+1. An environment presents an observation and task objective.
+2. An agent chooses an action.
+3. The environment validates and applies the action.
+4. A deterministic grader scores the result.
+5. `AgentRunner` records steps, timing, errors, actions, observations, and
+   termination.
+6. `BenchmarkRunner` repeats this process across tasks, runs, or agents.
+7. SQLite stores results and the React dashboard makes them inspectable.
+
+This makes the project useful for answering questions such as:
+
+- Did the agent solve the task?
+- Which model or agent performed better on the same task?
+- Did it fail because of an invalid action, an incorrect answer, a timeout, or
+  an environment error?
+- How many steps did it use and what happened at each step?
 
 ## Environments and tasks
 
@@ -279,6 +358,139 @@ tests/       backend unit and integration tests
   Basic authentication protects API/result routes; this is shared-credential
   access, not a full identity or account-management system.
 - There is no dashboard editing, scheduling, distributed execution,
-  multi-model UI configuration, or failure-analysis model.
+  multi-model UI configuration, account management, or a failure-analysis
+  model.
 - Future work can add stronger deployment hardening, richer dashboard
-  visualizations, database migrations, and authenticated multi-user access.
+  visualizations, database migrations, role-based identity, and distributed
+  workers.
+
+## Portfolio and career assessment
+
+### How strong is it for a final-year computer engineering student?
+
+This is a **strong portfolio project for backend and applied AI engineering**,
+especially because it demonstrates more than an LLM API call. It shows a
+complete engineering loop:
+
+- typed Python models and interfaces
+- FastAPI service design
+- synchronous and asynchronous execution
+- timeout and cancellation handling
+- deterministic environments and graders
+- benchmark aggregation and multi-agent comparison
+- trajectory and failure analysis
+- SQLite persistence through a repository layer
+- React dashboard development
+- Docker and Docker Compose packaging
+- CI automation and automated tests
+
+It is particularly valuable for internships because the scope is easy to
+explain in an interview: an agent performs controlled tasks, the system grades
+it deterministically, and the platform stores and visualizes what happened.
+
+It is not yet equivalent to a large production platform. The current SQLite
+storage, shared HTTP Basic credentials, limited frontend tests, and local
+single-service deployment should be presented honestly as deliberate
+simplicity and future extension points.
+
+### Best roles for this project
+
+#### 1. Backend Software Engineer — strongest fit
+
+This project is most directly aligned with backend roles. Emphasize:
+
+- FastAPI endpoints and validation
+- `AgentRunner` orchestration
+- async execution and cancellation
+- structured result schemas
+- repository/data-access separation
+- SQLite persistence
+- error handling and health checks
+- Docker and CI
+
+Suggested resume positioning:
+
+> Built a typed FastAPI evaluation platform that executes registered agents
+> against deterministic environments, records trajectories and failure
+> analysis, persists results in SQLite, and exposes benchmark retrieval APIs.
+
+#### 2. Applied AI / AI Platform Engineer — very strong fit
+
+This is also a strong project for applied AI infrastructure roles. Emphasize:
+
+- provider-neutral LLM interface
+- model/agent comparison
+- deterministic grading instead of subjective LLM judging
+- token and execution metrics
+- trajectory inspection
+- reproducible MockAgent tests
+- safe action validation and allowlisted agents/environments
+
+This positions you as someone who builds reliable systems around models, not
+only prompts.
+
+#### 3. ML Engineer / Evaluation Engineer — strong fit
+
+The benchmark, grading, metrics, comparison, and failure-analysis components
+map well to model evaluation work. Emphasize:
+
+- controlled task definitions
+- repeatable experiments
+- success rate, score, latency, steps, and timeout metrics
+- per-agent comparison
+- failure categories
+- JSON/CSV export
+- reproducibility through seeded runs and deterministic fixtures
+
+For a pure research-heavy ML role, add a stronger experimental report,
+statistical confidence intervals, and larger evaluation datasets before
+presenting it as an ML research project.
+
+#### 4. Full-stack Engineer — good supporting fit
+
+The React dashboard gives the project credible full-stack scope. Emphasize:
+
+- API-driven React UI
+- responsive summary tables and filters
+- trajectory/run detail views
+- loading, empty, and error states
+- Vite build and Nginx container
+
+For frontend-focused roles, the project would benefit from more component
+tests, accessibility checks, and a richer visual analytics layer.
+
+#### 5. DevOps / Platform Engineer — supporting fit
+
+Docker, Compose, health checks, persistent volumes, environment configuration,
+and GitHub Actions provide a useful platform angle. It is supporting evidence,
+not the strongest primary story, because it does not yet include cloud
+deployment, orchestration, observability, or distributed workers.
+
+### Recommended resume title
+
+Use a title that reflects the strongest contribution:
+
+> **OpenEnv Workbench — Agent Evaluation and Benchmarking Platform**
+
+Good keywords to include, where truthful:
+
+`Python`, `FastAPI`, `Pydantic`, `React`, `SQLite`, `Docker`, `GitHub Actions`,
+`asyncio`, `LLM providers`, `agent orchestration`, `benchmarking`,
+`deterministic evaluation`, `trajectory tracking`, `failure analysis`.
+
+### What to improve before applying
+
+The highest-value next improvements would be:
+
+1. Add richer frontend component and API integration tests.
+2. Add structured application logging and request correlation IDs.
+3. Add PostgreSQL support behind the existing repository interface.
+4. Add stronger authentication with roles if deploying publicly.
+5. Add CI linting/type checks and dependency update automation.
+6. Publish a short benchmark report using clearly labeled, reproducible
+   configurations.
+7. Deploy a demo instance with secrets managed outside the repository.
+
+For interviews, be ready to explain the action contract, why grading is
+deterministic, how cancellation works, why environments are allowlisted, and
+why the repository layer is separate from execution logic.
