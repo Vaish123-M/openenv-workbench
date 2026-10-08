@@ -112,6 +112,18 @@ termination, invalid actions, agent/environment errors, missing observations,
 and cooperative timeout checks. Timeout checks occur between calls; a call
 already in progress cannot be forcefully interrupted in this phase.
 
+An LLM-backed agent can use any provider implementing `complete(prompt) -> str`.
+`OpenAIProvider` is an OpenAI-compatible implementation that reads credentials
+from `OPENAI_API_KEY` or `HF_TOKEN`:
+
+```python
+from agent import AgentRunner, LLMBackedAgent, OpenAIProvider
+from environment.core import OpenEnv
+
+agent = LLMBackedAgent(OpenAIProvider())
+result = AgentRunner().run(OpenEnv(), agent, task_id="email_classification")
+```
+
 The script logs exactly in this format for each task:
 
 ```text
