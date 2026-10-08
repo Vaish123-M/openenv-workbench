@@ -58,6 +58,9 @@ class BenchmarkSummary(BaseModel):
     average_execution_time: float = 0.0
     failure_rate: float = 0.0
     timeout_rate: float = 0.0
+    failure_categories: dict[str, int] = Field(default_factory=dict)
+    repeated_action_count: int = 0
+    wasted_steps: int = 0
 
 
 class AgentComparisonSummary(BenchmarkSummary):

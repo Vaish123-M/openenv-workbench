@@ -169,6 +169,12 @@ Each `RunResult` also includes `metrics` and `grading`. Metrics report observed
 step counts, failures, invalid actions, elapsed time, timeout status, and
 provider model/token usage when available. Grading is populated from the
 environment's existing `score`, `reward`, `penalty`, and `breakdown` fields.
+Every run also contains a structured `trajectory` with each observation,
+action, environment response, timestamp, duration, and error. Deterministic
+failure summaries classify invalid actions, agent/environment errors,
+constraint violations, incorrect output, incomplete tasks, timeouts, and
+repeated failed actions. Benchmark summaries aggregate these categories and
+track repeated actions and wasted steps.
 
 ## Multi-agent benchmark comparison
 

@@ -167,6 +167,10 @@ class BenchmarkRunner:
         steps = [record.result.steps for record in records]
         elapsed = [record.result.metrics.elapsed_time for record in records]
         failed = total - successful
+        failure_categories: dict[str, int] = {}
+        for record in records:
+            for category in record.result.failure.categories:
+                failure_categories[category] = failure_categories.get(category, 0) + 1
         return BenchmarkSummary(
             total_runs=total,
             successful_runs=successful,
@@ -178,6 +182,11 @@ class BenchmarkRunner:
             average_execution_time=sum(elapsed) / total if total else 0.0,
             failure_rate=failed / total if total else 0.0,
             timeout_rate=timeouts / total if total else 0.0,
+            failure_categories=failure_categories,
+            repeated_action_count=sum(
+                record.result.metrics.repeated_action_count for record in records
+            ),
+            wasted_steps=sum(record.result.metrics.wasted_steps for record in records),
         )
 
     @staticmethod

@@ -11,7 +11,15 @@ from pydantic import ValidationError
 from environment.models import Action
 
 from .interface import Agent, AsyncAgent
-from .models import ExecutionMetrics, GradingSummary, RunError, RunResult
+from .models import (
+    ExecutionMetrics,
+    FailureCategory,
+    FailureSummary,
+    GradingSummary,
+    RunError,
+    RunResult,
+    TrajectoryStep,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -86,24 +94,27 @@ class AgentRunner:
             if self._timed_out(started, timeout):
                 return self._finish(result, "timeout")
 
+            interaction_started = time.monotonic()
             try:
                 action = agent.observe(observation)
                 self._record_agent_metadata(result, agent)
             except Exception as exc:
                 return self._failure(result, "agent_error", exc, "Agent failed while choosing an action")
 
+            result.final_action = action
             try:
                 Action.model_validate(action)
             except (ValidationError, TypeError, ValueError) as exc:
                 return self._failure(result, "invalid_action", exc, "Agent returned an invalid action")
 
-            result.final_action = action
             if self._timed_out(started, timeout):
                 return self._finish(result, "timeout")
 
             try:
+                current_observation = observation
                 step_result = environment.step(action)
                 observation, _, done, info = self._unpack_step(step_result)
+                result.info = info
                 if self._is_invalid_environment_action(info):
                     return self._failure(
                         result,
@@ -119,6 +130,13 @@ class AgentRunner:
             result.steps += 1
             result.info = info
             self._record_grading(result, info)
+            self._record_trajectory(
+                result,
+                current_observation,
+                action,
+                {"observation": observation, "reward": _, "done": done, "info": info},
+                interaction_started,
+            )
             if observation is None:
                 return self._failure(
                     result,
@@ -178,6 +196,7 @@ class AgentRunner:
             result.environment = getattr(observation, "task_name", result.environment)
 
             for _ in range(max_steps):
+                interaction_started = time.monotonic()
                 try:
                     observer = getattr(agent, "aobserve", None)
                     if observer is None:
@@ -191,16 +210,18 @@ class AgentRunner:
                 except Exception as exc:
                     return self._failure(result, "agent_error", exc, "Agent failed while choosing an action")
 
+                result.final_action = action
                 try:
                     Action.model_validate(action)
                 except (ValidationError, TypeError, ValueError) as exc:
                     return self._failure(result, "invalid_action", exc, "Agent returned an invalid action")
-                result.final_action = action
 
                 try:
+                    current_observation = observation
                     observation, _, done, info = await self._call_with_deadline(
                         lambda: environment.step(action), started, timeout, "environment"
                     )
+                    result.info = info
                     if self._is_invalid_environment_action(info):
                         return self._failure(
                             result,
@@ -218,6 +239,13 @@ class AgentRunner:
                 result.steps += 1
                 result.info = info
                 self._record_grading(result, info)
+                self._record_trajectory(
+                    result,
+                    current_observation,
+                    action,
+                    {"observation": observation, "reward": _, "done": done, "info": info},
+                    interaction_started,
+                )
                 if observation is None:
                     return self._failure(
                         result,
@@ -310,6 +338,7 @@ class AgentRunner:
             result.metrics.agent_errors.append(result.error)
         elif reason == "environment_error":
             result.metrics.environment_errors.append(result.error)
+        AgentRunner._record_failed_trajectory(result, reason)
         logger.error("%s: %s", log_message, result.error.error_type)
         AgentRunner._finalize_metrics(result, reason)
         return result
@@ -344,6 +373,97 @@ class AgentRunner:
         result.metrics.total_steps = result.steps
         result.metrics.elapsed_time = max(time.monotonic() - result._started_at, 0.0)
         result.metrics.timed_out = reason == "timeout"
+        repeated = AgentRunner._repeated_actions(result.trajectory)
+        result.metrics.repeated_action_count = repeated
+        result.metrics.wasted_steps = AgentRunner._wasted_steps(result, reason)
+        result.failure = AgentRunner._failure_summary(result, reason, repeated)
+
+    @staticmethod
+    def _record_trajectory(
+        result: RunResult,
+        observation: Any,
+        action: Any,
+        response: Any,
+        started: float,
+    ) -> None:
+        result.trajectory.append(
+            TrajectoryStep(
+                step_number=len(result.trajectory) + 1,
+                observation=observation,
+                action=action,
+                environment_response=response,
+                timestamp=time.time(),
+                duration=max(time.monotonic() - started, 0.0),
+            )
+        )
+
+    @staticmethod
+    def _record_failed_trajectory(result: RunResult, reason: str) -> None:
+        if len(result.trajectory) >= result.steps + 1:
+            return
+        error = result.error
+        result.trajectory.append(
+            TrajectoryStep(
+                step_number=len(result.trajectory) + 1,
+                observation=result.final_observation,
+                action=result.final_action,
+                environment_response=None,
+                timestamp=time.time(),
+                error=error,
+            )
+        )
+
+    @staticmethod
+    def _category_for_reason(reason: str) -> FailureCategory | None:
+        return reason if reason in {
+            "invalid_action", "agent_error", "environment_error", "timeout"
+        } else None  # type: ignore[return-value]
+
+    @staticmethod
+    def _repeated_actions(trajectory: list[TrajectoryStep]) -> int:
+        seen: set[str] = set()
+        repeated = 0
+        for entry in trajectory:
+            key = repr(entry.action)
+            if entry.action is not None and key in seen:
+                repeated += 1
+            if entry.action is not None:
+                seen.add(key)
+        return repeated
+
+    @staticmethod
+    def _wasted_steps(result: RunResult, reason: str) -> int:
+        return result.steps if reason in {"max_steps_reached", "timeout"} else 0
+
+    @staticmethod
+    def _failure_summary(
+        result: RunResult, reason: str, repeated: int
+    ) -> FailureSummary:
+        categories: list[FailureCategory] = []
+        category = AgentRunner._category_for_reason(reason)
+        if category:
+            categories.append(category)
+        if reason == "max_steps_reached":
+            categories.append("incomplete_task")
+        if repeated:
+            categories.append("repeated_failed_action")
+        if result.completed is False and result.grading.score is not None and result.grading.score < 1:
+            categories.append("incorrect_output")
+        nested = result.info.get("result")
+        constraint_violation = result.info.get("constraint_violation") is True or (
+            isinstance(nested, dict) and nested.get("constraint_violation") is True
+        )
+        if constraint_violation:
+            categories.append("constraint_violation")
+        primary = categories[0] if categories else None
+        return FailureSummary(
+            primary_reason=primary,
+            categories=list(dict.fromkeys(categories)),
+            error_count=len(result.metrics.agent_errors) + len(result.metrics.environment_errors)
+            + (1 if result.error and not categories else 0),
+            repeated_action_count=repeated,
+            wasted_steps=AgentRunner._wasted_steps(result, reason),
+        )
 
 
 class _OperationTimeout(TimeoutError):

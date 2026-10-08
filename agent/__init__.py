@@ -8,7 +8,14 @@ from .llm import (
     LLMProviderError,
     OpenAIProvider,
 )
-from .models import ExecutionMetrics, GradingSummary, RunError, RunResult
+from .models import (
+    ExecutionMetrics,
+    FailureSummary,
+    GradingSummary,
+    RunError,
+    RunResult,
+    TrajectoryStep,
+)
 from .runner import AgentRunner, AgentTimeoutError, EnvironmentTimeoutError
 
 __all__ = [
@@ -20,6 +27,7 @@ __all__ = [
     "AsyncOpenAIProvider",
     "EnvironmentTimeoutError",
     "ExecutionMetrics",
+    "FailureSummary",
     "GradingSummary",
     "AsyncAgent",
     "LLMBackedAgent",
@@ -29,4 +37,5 @@ __all__ = [
     "OpenAIProvider",
     "RunError",
     "RunResult",
+    "TrajectoryStep",
 ]

@@ -14,6 +14,38 @@ class RunError(BaseModel):
     message: str
 
 
+FailureCategory = Literal[
+    "invalid_action",
+    "agent_error",
+    "environment_error",
+    "constraint_violation",
+    "incorrect_output",
+    "incomplete_task",
+    "timeout",
+    "repeated_failed_action",
+]
+
+
+class TrajectoryStep(BaseModel):
+    """One attempted agent/environment interaction."""
+
+    step_number: int
+    observation: Any = None
+    action: Any = None
+    environment_response: Any = None
+    timestamp: float
+    duration: float = 0.0
+    error: RunError | None = None
+
+
+class FailureSummary(BaseModel):
+    primary_reason: FailureCategory | None = None
+    categories: list[FailureCategory] = Field(default_factory=list)
+    error_count: int = 0
+    repeated_action_count: int = 0
+    wasted_steps: int = 0
+
+
 class ExecutionMetrics(BaseModel):
     total_steps: int = 0
     failed_steps: int = 0
@@ -24,6 +56,8 @@ class ExecutionMetrics(BaseModel):
     timed_out: bool = False
     model_name: str | None = None
     token_usage: dict[str, int] | None = None
+    repeated_action_count: int = 0
+    wasted_steps: int = 0
 
 
 class GradingSummary(BaseModel):
@@ -58,4 +92,6 @@ class RunResult(BaseModel):
     info: Dict[str, Any] = Field(default_factory=dict)
     metrics: ExecutionMetrics = Field(default_factory=ExecutionMetrics)
     grading: GradingSummary = Field(default_factory=GradingSummary)
+    trajectory: list[TrajectoryStep] = Field(default_factory=list)
+    failure: FailureSummary = Field(default_factory=FailureSummary)
     _started_at: float = monotonic()

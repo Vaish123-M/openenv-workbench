@@ -28,6 +28,13 @@ def test_successful_run_completes_against_existing_environment() -> None:
     assert result.metrics.elapsed_time >= 0
     assert result.grading.score == 1.0
     assert result.grading.breakdown["label"] == 1.0
+    assert len(result.trajectory) == 1
+    assert result.trajectory[0].step_number == 1
+    assert result.trajectory[0].observation is not None
+    assert result.trajectory[0].action == SUCCESSFUL_EMAIL
+    assert result.trajectory[0].environment_response["done"] is True
+    assert result.trajectory[0].duration >= 0
+    assert result.failure.primary_reason is None
 
 
 def test_max_steps_termination() -> None:
@@ -41,6 +48,10 @@ def test_max_steps_termination() -> None:
     assert result.termination_reason == "max_steps_reached"
     assert result.steps == 2
     assert result.metrics.total_steps == 2
+    assert result.failure.primary_reason == "incomplete_task"
+    assert "incorrect_output" in result.failure.categories
+    assert result.failure.wasted_steps == 2
+    assert result.metrics.repeated_action_count == 1
 
 
 class CountingEnvironment:
@@ -81,6 +92,8 @@ def test_agent_exception_is_structured() -> None:
     assert result.error.error_type == "RuntimeError"
     assert len(result.metrics.agent_errors) == 1
     assert result.metrics.failed_steps == 1
+    assert result.failure.primary_reason == "agent_error"
+    assert result.trajectory[0].error is not None
 
 
 def test_environment_exception_is_structured() -> None:
@@ -94,6 +107,7 @@ def test_environment_exception_is_structured() -> None:
     assert result.steps == 0
     assert result.error is not None
     assert len(result.metrics.environment_errors) == 1
+    assert result.failure.primary_reason == "environment_error"
 
 
 @pytest.mark.parametrize(
@@ -111,6 +125,30 @@ def test_invalid_action_is_structured(action: object) -> None:
     assert result.error is not None
     assert result.metrics.invalid_action_count == 1
     assert result.metrics.failed_steps == 1
+    assert result.failure.primary_reason == "invalid_action"
+    assert result.trajectory[0].error is not None
+
+
+def test_constraint_violation_is_recorded_without_an_llm_judge() -> None:
+    class ConstrainedEnvironment(CountingEnvironment):
+        def step(self, action: dict[str, str]) -> tuple[dict[str, bool], float, bool, dict[str, object]]:
+            self.actions.append(action)
+            return (
+                {"done": False},
+                0.0,
+                False,
+                {"constraint_violation": True, "score": 0.0},
+            )
+
+    result = AgentRunner().run(
+        ConstrainedEnvironment(),
+        MockAgent([{"content": "blocked", "format": "text"}]),
+        max_steps=1,
+    )
+
+    assert result.termination_reason == "max_steps_reached"
+    assert result.failure.primary_reason == "incomplete_task"
+    assert "constraint_violation" in result.failure.categories
 
 
 def test_async_run_supports_async_agent_and_environment() -> None:
@@ -156,6 +194,7 @@ def test_async_agent_timeout_cancels_in_progress_call() -> None:
         assert cancelled.is_set()
         assert result.metrics.timed_out is True
         assert result.metrics.elapsed_time >= 0
+        assert result.failure.primary_reason == "timeout"
 
     asyncio.run(scenario())
 
@@ -181,6 +220,7 @@ def test_async_environment_timeout_is_structured() -> None:
         assert result.error is not None
         assert result.error.error_type == "EnvironmentTimeoutError"
         assert result.metrics.timed_out is True
+        assert result.failure.primary_reason == "timeout"
 
     asyncio.run(scenario())
 
