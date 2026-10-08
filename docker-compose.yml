@@ -1,0 +1,33 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      OPENENV_RESULTS_DB: /data/openenv_results.db
+      CORS_ORIGINS: http://localhost:3000
+      OPENENV_BASIC_AUTH_USERNAME: ${OPENENV_BASIC_AUTH_USERNAME:-}
+      OPENENV_BASIC_AUTH_PASSWORD: ${OPENENV_BASIC_AUTH_PASSWORD:-}
+      OPENENV_BASIC_AUTH_USERS: ${OPENENV_BASIC_AUTH_USERS:-}
+    ports:
+      - "8000:8000"
+    volumes:
+      - openenv-data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  dashboard:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "3000:80"
+
+volumes:
+  openenv-data:

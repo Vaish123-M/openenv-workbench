@@ -14,6 +14,36 @@ SUCCESSFUL_EMAIL = {
 }
 
 
+def test_health_endpoint_reports_ready() -> None:
+    response = client.get("/health")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+
+
+def test_protected_routes_use_optional_basic_auth(monkeypatch) -> None:
+    monkeypatch.setenv("OPENENV_BASIC_AUTH_USERNAME", "portfolio")
+    monkeypatch.setenv("OPENENV_BASIC_AUTH_PASSWORD", "local-only")
+
+    assert client.get("/results/benchmarks").status_code == 401
+    assert client.get(
+        "/results/benchmarks",
+        auth=("portfolio", "local-only"),
+    ).status_code == 200
+    assert client.get("/health").status_code == 200
+
+
+def test_basic_auth_supports_configured_additional_users(monkeypatch) -> None:
+    monkeypatch.delenv("OPENENV_BASIC_AUTH_USERNAME", raising=False)
+    monkeypatch.delenv("OPENENV_BASIC_AUTH_PASSWORD", raising=False)
+    monkeypatch.setenv("OPENENV_BASIC_AUTH_USERS", "analyst:local-only")
+
+    assert client.get(
+        "/results/benchmarks",
+        auth=("analyst", "local-only"),
+    ).status_code == 200
+
+
 def test_run_endpoint_executes_allowlisted_mock_agent() -> None:
     response = client.post(
         "/runs",

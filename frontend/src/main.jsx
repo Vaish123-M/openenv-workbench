@@ -1,20 +1,22 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
+import { formatNumber, formatPercent } from "./format.js";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "";
 
-async function getJson(path) {
-  const response = await fetch(`${API_BASE}${path}`);
+async function getJson(path, credentials) {
+  const headers = credentials?.username
+    ? { Authorization: `Basic ${btoa(`${credentials.username}:${credentials.password}`)}` }
+    : {};
+  const response = await fetch(`${API_BASE}${path}`, { headers });
   if (!response.ok) {
-    throw new Error(`Request failed (${response.status})`);
+    const error = new Error(`Request failed (${response.status})`);
+    error.status = response.status;
+    throw error;
   }
   return response.json();
 }
-
-const formatPercent = (value) => `${((value || 0) * 100).toFixed(1)}%`;
-const formatNumber = (value, digits = 2) =>
-  Number.isFinite(value) ? value.toFixed(digits) : "—";
 
 function MetricCard({ label, value, tone = "" }) {
   return (
@@ -173,11 +175,13 @@ function App() {
   const [filters, setFilters] = React.useState({ agent: "", environment: "", task: "", difficulty: "", benchmark_run: "", options: {} });
   const [status, setStatus] = React.useState("loading");
   const [error, setError] = React.useState("");
+  const [credentials, setCredentials] = React.useState(null);
+  const [login, setLogin] = React.useState({ username: "", password: "" });
 
   const load = React.useCallback(async () => {
     setStatus("loading");
     try {
-      const [runData, benchmarkData] = await Promise.all([getJson("/results/runs?limit=1000"), getJson("/results/benchmarks?limit=100")]);
+      const [runData, benchmarkData] = await Promise.all([getJson("/results/runs?limit=1000", credentials), getJson("/results/benchmarks?limit=100", credentials)]);
       setRecords(runData);
       setBenchmarks(benchmarkData);
       setFilters((current) => ({ ...current, options: {
@@ -191,7 +195,7 @@ function App() {
       setError(loadError.message);
       setStatus("error");
     }
-  }, []);
+  }, [credentials]);
 
   React.useEffect(() => { load(); }, [load]);
   const updateFilter = (key, value) => setFilters((current) => ({ ...current, [key]: value }));
@@ -203,6 +207,18 @@ function App() {
     (!filters.benchmark_run || record.benchmark_run_id === filters.benchmark_run)
   );
 
+  if (status === "error" && error.includes("(401)")) {
+    return <main className="app-shell login-shell"><section className="login-card">
+      <p className="eyebrow">OpenEnv Workbench</p><h1>Sign in to evaluations</h1>
+      <p className="login-help">Use the API credentials configured for this deployment. They remain in memory only.</p>
+      <form onSubmit={(event) => { event.preventDefault(); setCredentials(login); }}>
+        <label>Username<input value={login.username} onChange={(event) => setLogin({ ...login, username: event.target.value })} autoComplete="username" /></label>
+        <label>Password<input type="password" value={login.password} onChange={(event) => setLogin({ ...login, password: event.target.value })} autoComplete="current-password" /></label>
+        <button className="refresh-button" type="submit">Sign in</button>
+      </form>
+      <p className="error-text">{error}</p>
+    </section></main>;
+  }
   return <main className="app-shell">
     <header className="topbar"><div><p className="eyebrow">OpenEnv Workbench</p><h1>Evaluation dashboard</h1></div><button className="refresh-button" onClick={load}>Refresh data</button></header>
     {status === "loading" && <div className="state-panel">Loading evaluation results…</div>}

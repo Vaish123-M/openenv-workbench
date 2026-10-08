@@ -1,280 +1,284 @@
-# openenv-workbench
+# OpenEnv Workbench
 
-openenv-workbench is a small OpenEnv-compliant benchmark for real-world agent workflows. It simulates three non-game tasks: email classification, data cleaning, and customer support reply generation.
+OpenEnv Workbench is a small, deterministic evaluation platform for testing
+agents on realistic, non-game tasks. It gives developers one repeatable
+execution path from observation to action, deterministic grading, structured
+metrics, trajectory capture, benchmark comparison, persistence, and a focused
+React dashboard.
 
-## Project Overview
+## Why it exists
 
-The environment is intentionally lightweight and deterministic. Each task exposes a clear objective, a step-based reward signal, and a deterministic grader that returns a normalized score between `0.0` and `1.0`.
+Agent demos often make it difficult to answer basic engineering questions:
+which agent succeeded, which task failed, how many steps were wasted, and what
+actually happened before termination? This project makes those questions
+observable and testable without requiring an LLM for the default test suite.
 
-## Structure
+## Architecture and execution flow
 
-- `environment/` contains the OpenEnv runtime, FastAPI app, and shared Pydantic models.
-- `tasks/` contains the task definitions and deterministic graders.
-- `models/` contains the OpenAI-compatible client helper and prompting utilities.
-- `inference.py` runs all tasks using an OpenAI-compatible endpoint.
-- `openenv.yaml` describes the environment metadata.
-- `Dockerfile` builds and runs the API service.
-
-## Tasks
-
-### Easy: Email Classification
-
-Classify a suspicious email as `spam` or `important` and justify the decision with evidence from the message.
-
-### Medium: Data Cleaning
-
-Normalize a messy customer table by removing duplicates and fixing names, emails, dates, and phone numbers.
-
-### Hard: Customer Support Reply Generation
-
-Draft a helpful support response that acknowledges the issue, follows policy, and gives a concrete next step.
-
-## Setup
-
-Install dependencies:
-
-```bash
-pip install -r requirements.txt
+```mermaid
+flowchart TD
+    UI[React dashboard] --> API[FastAPI read/run API]
+    CLI[Benchmark CLI] --> BR[BenchmarkRunner]
+    BR --> AR[AgentRunner]
+    API --> AR
+    AR --> AG[Registered agent]
+    AR --> ENV[Registered environment]
+    ENV --> G[Deterministic grader]
+    AR --> RR[ResultRepository]
+    RR --> DB[(SQLite)]
+    AR --> R[RunResult: metrics, trajectory, failure analysis]
 ```
 
-Run the FastAPI app locally:
+The core loop is:
 
-```bash
-uvicorn environment.app:app --host 0.0.0.0 --port 8000
+```text
+environment.reset()
+  -> observation
+  -> agent.observe(observation)
+  -> action validation
+  -> environment.step(action)
+  -> new observation/reward/info
+  -> repeat until completion, limit, timeout, or error
 ```
 
-Run in Docker:
+## Environments and tasks
 
-```bash
-docker build -t openenv-workbench .
-docker run -p 8000:8000 openenv-workbench
-```
+The original OpenEnv environment includes:
 
-## API Usage
+- **Email Classification** (`email_classification`, easy)
+- **Data Cleaning** (`data_cleaning`, medium)
+- **Customer Support** (`customer_support_reply`, hard)
 
-### Reset
+The controlled coding environment includes deterministic Python bug-fixing
+tasks:
 
-```bash
-curl -X POST http://localhost:8000/reset -H "Content-Type: application/json" -d "{\"task_name\": \"email_classification\"}"
-```
+- `fix_addition`
+- `fix_email_normalization`
+- `fix_safe_division`
 
-### Step
+Coding actions are restricted to `list_files`, `read_file`, `edit_file`,
+`run_tests`, and `submit`. It does not accept arbitrary shell commands or host
+filesystem paths.
 
-```bash
-curl -X POST http://localhost:8000/step -H "Content-Type: application/json" -d "{\"action\": {\"content\": \"{\\\"label\\\": \\\"spam\\\", \\\"reason\\\": \\\"It asks for card details and uses urgent language.\\\"}\", \"format\": \"json\"}}"
-```
+## Agents and LLM architecture
 
-### State
+Agents implement the small `observe(observation) -> action` interface.
+`MockAgent` returns predefined actions and is used for deterministic tests.
+`LLMBackedAgent` uses the provider-neutral `LLMProvider` interface.
+`OpenAIProvider` is the current OpenAI-compatible provider implementation.
+Credentials are read from environment variables and are never written to
+results or logs.
 
-```bash
-curl http://localhost:8000/state
-```
+## AgentRunner
 
-### Controlled Agent Run
+`AgentRunner` is independently usable from Python and supports synchronous
+and asynchronous agents/environments. It validates actions, enforces
+`max_steps`, supports cooperative overall timeouts, handles cancellation in
+async runs, and returns a structured `RunResult`.
 
-The internal `/runs` endpoint only accepts registered environment and agent
-names. It does not import or execute caller-supplied classes or code.
+Each result includes:
 
-```bash
-curl -X POST http://localhost:8000/runs \
-  -H "Content-Type: application/json" \
-  -d "{\"environment\":\"openenv\",\"task\":\"email_classification\",\"agent\":\"mock\",\"max_steps\":3,\"actions\":[{\"content\":\"{\\\"label\\\":\\\"spam\\\",\\\"reason\\\":\\\"Verify suspension card click immediately form.\\\"}\",\"format\":\"json\"}]}"
-```
+- completion and termination reason
+- final observation/action
+- grading summary
+- execution metrics
+- agent/environment errors
+- model and token metadata when provided
+- every interaction as a structured trajectory
+- deterministic failure categories and primary failure reason
 
-## Baseline Inference
+## Deterministic grading and failure analysis
 
-`inference.py` uses an OpenAI-compatible client and reads these environment variables:
+Environment graders produce normalized scores and breakdowns. The runner does
+not ask an LLM to judge failures. Failure categories are derived from
+validated runner/environment facts, including invalid actions, agent errors,
+environment errors, constraint violations, incorrect output, incomplete
+tasks, timeouts, and repeated failed actions.
 
-- `API_BASE_URL`
-- `MODEL_NAME`
-- `HF_TOKEN`
+## Benchmarks and multi-agent comparison
+
+`BenchmarkRunner` runs one or more tasks repeatedly through `AgentRunner`.
+Configurations specify the environment, tasks, registered agent(s), step
+limit, timeout, run count, and optional seed. Aggregates include success rate,
+average score, average steps, average execution time, failure rate, timeout
+rate, failure categories, repeated actions, and wasted steps.
+
+Multiple registered agents can be compared on the same tasks and evaluation
+settings. Results can be exported to JSON or CSV.
 
 Example:
-
-```bash
-set API_BASE_URL=https://api.openai.com/v1
-set MODEL_NAME=gpt-4o-mini
-set HF_TOKEN=your_token_here
-python inference.py
-```
-
-## Agent Runner
-
-Phase 1 includes a reusable runner for executing any agent that implements
-`observe(observation) -> action` against the existing `OpenEnv` environment.
-The deterministic `MockAgent` is useful for local checks without an LLM:
-
-```python
-from agent import AgentRunner, MockAgent
-from environment.core import OpenEnv
-
-agent = MockAgent([
-    {
-        "content": "{\"label\": \"spam\", \"reason\": \"Urgent request for card details.\"}",
-        "format": "json",
-    }
-])
-result = AgentRunner().run(OpenEnv(), agent, task_id="email_classification", max_steps=3)
-print(result.model_dump())
-```
-
-The runner returns a structured `RunResult` for task completion, max-step
-termination, invalid actions, agent/environment errors, missing observations,
-and cooperative timeout checks. Timeout checks occur between calls; a call
-already in progress cannot be forcefully interrupted in this phase.
-
-## Benchmarks
-
-`BenchmarkRunner` executes named tasks through the existing `AgentRunner`,
-records every `RunResult`, and aggregates success rate, score, steps,
-execution time, failures, and timeouts. It supports repeated runs, filters,
-and JSON/CSV export. A minimal CLI is available:
-
-```bash
-python -m benchmark.cli run --environment openenv \
-  --tasks email_classification --agent mock --runs 2 \
-  --actions mock-actions.json --output-json results.json --output-csv results.csv
-```
-
-The actions file is a JSON object keyed by task ID, with each value containing
-the action objects supplied to `MockAgent`.
-
-## Coding Environment
-
-The Phase 3 coding environment is available as the registered `coding`
-environment for controlled runs. It creates a temporary task workspace and
-accepts only JSON tool actions: `list_files`, `read_file`, `edit_file`,
-`run_tests`, and `submit`. Paths are restricted to that workspace and tests
-run through a fixed Python/pytest invocation with a timeout.
-
-An LLM-backed agent can use any provider implementing `complete(prompt) -> str`.
-`OpenAIProvider` is an OpenAI-compatible implementation that reads credentials
-from `OPENAI_API_KEY` or `HF_TOKEN`:
-
-```python
-from agent import AgentRunner, LLMBackedAgent, OpenAIProvider
-from environment.core import OpenEnv
-
-agent = LLMBackedAgent(OpenAIProvider())
-result = AgentRunner().run(OpenEnv(), agent, task_id="email_classification")
-```
-
-For asynchronous agents/providers or environments, use
-`await AgentRunner().run_async(...)`. Awaitable calls are cancelled when the
-overall timeout expires, and external task cancellation is propagated after
-best-effort cleanup. Synchronous calls used through `run_async` remain
-non-preemptible because Python cannot safely interrupt a blocking call.
-
-Each `RunResult` also includes `metrics` and `grading`. Metrics report observed
-step counts, failures, invalid actions, elapsed time, timeout status, and
-provider model/token usage when available. Grading is populated from the
-environment's existing `score`, `reward`, `penalty`, and `breakdown` fields.
-Every run also contains a structured `trajectory` with each observation,
-action, environment response, timestamp, duration, and error. Deterministic
-failure summaries classify invalid actions, agent/environment errors,
-constraint violations, incorrect output, incomplete tasks, timeouts, and
-repeated failed actions. Benchmark summaries aggregate these categories and
-track repeated actions and wasted steps.
-
-## Multi-agent benchmark comparison
-
-The benchmark runner can execute the same tasks and evaluation settings for
-multiple registered agents. Agent/provider construction remains in the agent
-registry; benchmark configuration only names the registered agents:
-
-```python
-from benchmark import BenchmarkConfig, BenchmarkRunner
-
-comparison = BenchmarkRunner().run_comparison(
-    BenchmarkConfig(
-        environment="openenv",
-        task_ids=["email_classification"],
-        agents=["mock", "openai"],
-        runs=3,
-        max_steps=10,
-    )
-)
-
-for agent_name, summary in comparison.summaries.items():
-    print(agent_name, summary.success_rate, summary.average_score)
-```
-
-Each record includes the registered agent and observed model name when the
-agent exposes one. Per-agent summaries include success rate, average score,
-average steps, average execution time, failure rate, and timeout rate. A
-single agent failure is recorded in that agent's results without stopping
-other agents. Comparison results can be exported with
-`BenchmarkRunner.export_comparison_json` and
-`BenchmarkRunner.export_comparison_csv`.
-
-## Persistent results
-
-`storage.ResultRepository` provides lightweight SQLite persistence without
-coupling database code to `AgentRunner` or environments:
-
-```python
-from storage import ResultRepository
-
-repository = ResultRepository("openenv_results.db")
-benchmark = BenchmarkRunner(repository=repository).run(config)
-stored = repository.get_benchmark(benchmark.benchmark_run_id)
-run = repository.get_run(benchmark.records[0].result.run_id)
-```
-
-The repository stores benchmark metadata, individual runs, model/agent
-identity, metrics, grading, trajectories, failure analysis, and termination
-reasons. The database schema is initialized automatically and adds missing
-local-development columns on startup. API runs are persisted to the same
-database; set `OPENENV_RESULTS_DB` to choose its path. Read-only retrieval
-routes are available at `/results/benchmarks/{id}`, `/results/runs/{id}`,
-`/results/agents/{agent}`, and
-`/results/environments/{environment}?task={task_id}`.
-
-## React dashboard
-
-Phase 8 adds a small React/Vite dashboard in `frontend/`. It reads evaluation
-data only through the FastAPI result endpoints and never accesses SQLite
-directly.
-
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-With the API running on port 8000, the Vite development proxy serves the
-dashboard at `http://localhost:5173`. It provides summary metrics,
-agent/model comparisons, environment/task performance, benchmark history,
-filters, individual run details, trajectory inspection, and deterministic
-failure-analysis categories. Loading, empty, and error states are included.
-Build it with `npm run build`.
-
-The CLI supports the same flow:
 
 ```bash
 python -m benchmark.cli run \
   --environment openenv \
   --tasks email_classification \
-  --agents mock openai \
-  --runs 3 \
-  --output-json comparison.json \
-  --output-csv comparison.csv
+  --agents mock \
+  --runs 2 \
+  --actions mock-actions.json \
+  --output-json results.json \
+  --output-csv results.csv
 ```
 
-The script logs exactly in this format for each task:
+The project does not claim benchmark scores here: scores depend on the
+provided actions, task configuration, and optional provider responses.
+
+## Persistence
+
+`storage.ResultRepository` provides SQLite persistence independent of
+`AgentRunner` and environment implementations. It stores benchmark metadata,
+individual task records, agents/models, scores, metrics, trajectories, failure
+analysis, termination reasons, and timestamps.
+
+```python
+from benchmark import BenchmarkConfig, BenchmarkRunner
+from storage import ResultRepository
+
+repository = ResultRepository("openenv_results.db")
+benchmark = BenchmarkRunner(repository=repository).run(
+    BenchmarkConfig(
+        environment="openenv",
+        task_ids=["email_classification"],
+        agent="mock",
+        actions={"email_classification": [...]},
+    )
+)
+stored = repository.get_benchmark(benchmark.benchmark_run_id)
+```
+
+The API persists controlled `/runs` executions when
+`OPENENV_RESULTS_DB` is configured. SQLite is intended for local development
+and single-service deployments, not high-concurrency production workloads.
+
+## Dashboard
+
+The React/Vite dashboard is in `frontend/`. It reads data only through
+FastAPI, never through SQLite. It provides summary metrics, agent/model
+comparison, environment/task performance, benchmark history, filters,
+individual run details, trajectory inspection, and failure analysis.
+
+## Installation and configuration
+
+Backend:
+
+```bash
+python -m venv .venv
+# Windows:
+.venv\Scripts\activate
+# macOS/Linux:
+# source .venv/bin/activate
+pip install -r requirements.txt
+copy .env.example .env  # Windows
+# cp .env.example .env  # macOS/Linux
+uvicorn environment.app:app --reload
+```
+
+Frontend:
+
+```bash
+cd frontend
+npm ci
+npm run dev
+```
+
+Configuration is documented in [.env.example](.env.example):
+
+- `OPENENV_RESULTS_DB`: SQLite path, default `./openenv_results.db`
+- `CORS_ORIGINS`: comma-separated allowed browser origins
+- `OPENENV_BASIC_AUTH_USERNAME` and `OPENENV_BASIC_AUTH_PASSWORD`: optional
+  HTTP Basic credentials for protected API/result routes. `/health` remains
+  public.
+- `OPENENV_BASIC_AUTH_USERS`: optional comma-separated additional
+  `username:password` entries for small shared deployments.
+- `OPENAI_API_KEY` or `HF_TOKEN`: optional provider credential
+- `API_BASE_URL`: optional OpenAI-compatible API base
+- `MODEL_NAME`: optional provider model name
+
+Never commit `.env` or credential values.
+
+When both Basic Auth variables are set, the dashboard displays an in-memory
+sign-in form. Credentials are sent only in request headers and are not
+persisted in browser storage.
+
+## Docker
+
+Start the API and dashboard together:
+
+```bash
+docker compose up --build
+```
+
+- API: `http://localhost:8000`
+- Dashboard: `http://localhost:3000`
+- Health: `http://localhost:8000/health`
+
+The SQLite file is stored in the named `openenv-data` volume. For API-only
+use:
+
+```bash
+docker build -t openenv-workbench .
+docker run --rm -p 8000:8000 -v openenv-data:/data \
+  -e OPENENV_RESULTS_DB=/data/openenv_results.db openenv-workbench
+```
+
+## API
+
+Important routes:
+
+- `GET /health`
+- `POST /reset`, `POST /step`, `GET /state`
+- `POST /runs`
+- `GET /results/benchmarks`
+- `GET /results/benchmarks/{benchmark_run_id}`
+- `GET /results/runs`
+- `GET /results/runs/{run_id}`
+- `GET /results/agents/{agent}`
+- `GET /results/environments/{environment}`
+
+The result-list route accepts `agent`, `environment`, `task`,
+`benchmark_run`, `difficulty`, and `limit` filters.
+
+## Tests and verification
+
+Backend:
+
+```bash
+pytest -q
+```
+
+Frontend:
+
+```bash
+cd frontend
+npm ci
+npm run build
+```
+
+CI runs backend tests and the frontend production build on pushes and pull
+requests using [.github/workflows/ci.yml](.github/workflows/ci.yml).
+
+## Project structure
 
 ```text
-[START]
-task: <task_name>
-
-[STEP]
-action: <action>
-reward: <value>
-
-[END]
-final_score: <value>
+agent/       agent interfaces, providers, runner, result models
+benchmark/   benchmark configuration, aggregation, CLI, exports
+coding/      sandboxed Python coding environment and tasks
+environment/ OpenEnv implementation and FastAPI API
+storage/     SQLite repository/data-access layer
+tasks/       deterministic task definitions and graders
+frontend/    React/Vite dashboard
+tests/       backend unit and integration tests
 ```
 
-## Validation
+## Limitations and future work
 
-The repository is structured to be compatible with `openenv validate` by exposing the required OpenEnv methods, deterministic task graders, and a FastAPI API surface.
+- SQLite is a lightweight local persistence option, not a distributed
+  database.
+- Synchronous blocking calls cannot be forcefully interrupted by
+  `run_async`.
+- The dashboard is read-focused and has no write controls. Optional HTTP
+  Basic authentication protects API/result routes; this is shared-credential
+  access, not a full identity or account-management system.
+- There is no dashboard editing, scheduling, distributed execution,
+  multi-model UI configuration, or failure-analysis model.
+- Future work can add stronger deployment hardening, richer dashboard
+  visualizations, database migrations, and authenticated multi-user access.

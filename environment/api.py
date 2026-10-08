@@ -3,7 +3,9 @@ from __future__ import annotations
 import os
 from typing import Any, Callable, Dict
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from .core import OpenEnv
@@ -38,6 +40,19 @@ class RunRequest(BaseModel):
 
 
 app = FastAPI(title="openenv-workbench", version="1.0.0")
+security = HTTPBasic(auto_error=False)
+_cors_origins = [
+    origin.strip()
+    for origin in os.getenv("CORS_ORIGINS", "http://localhost:5173,http://localhost:3000").split(",")
+    if origin.strip()
+]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins,
+    allow_credentials=False,
+    allow_methods=["GET", "POST"],
+    allow_headers=["*"],
+)
 env = OpenEnv()
 _result_repositories: dict[str, Any] = {}
 
@@ -49,6 +64,44 @@ def _results_repository() -> Any:
     if path not in _result_repositories:
         _result_repositories[path] = ResultRepository(path)
     return _result_repositories[path]
+
+
+@app.get("/health")
+def health() -> dict[str, str]:
+    return {"status": "ok"}
+
+
+def _require_auth(
+    credentials: HTTPBasicCredentials | None = Depends(security),
+) -> None:
+    expected_username = os.getenv("OPENENV_BASIC_AUTH_USERNAME")
+    expected_password = os.getenv("OPENENV_BASIC_AUTH_PASSWORD")
+    configured_users = _configured_users()
+    if not expected_username and not expected_password and not configured_users:
+        return
+    valid = credentials is not None and (
+        (credentials.username == expected_username and credentials.password == expected_password)
+        or configured_users.get(credentials.username) == credentials.password
+    )
+    if not valid:
+        raise HTTPException(
+            status_code=401,
+            detail="Authentication required",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+
+
+def _configured_users() -> dict[str, str]:
+    value = os.getenv("OPENENV_BASIC_AUTH_USERS", "")
+    users: dict[str, str] = {}
+    for entry in value.split(","):
+        if ":" in entry:
+            username, password = entry.split(":", 1)
+            if username and password:
+                users[username] = password
+    return users
+
+
 def _coding_environment() -> Any:
     from coding import CodingEnvironment
 
@@ -73,24 +126,24 @@ def _build_agent(request: RunRequest) -> Any:
     raise ValueError(f"Unknown registered agent: {request.agent}")
 
 
-@app.post("/reset")
+@app.post("/reset", dependencies=[Depends(_require_auth)])
 def reset(request: ResetRequest) -> Dict[str, Any]:
     observation = env.reset(request.task_name)
     return observation.model_dump()
 
 
-@app.post("/step", response_model=StepResponse)
+@app.post("/step", response_model=StepResponse, dependencies=[Depends(_require_auth)])
 def step(request: StepRequest) -> StepResponse:
     observation, reward, done, info = env.step(request.action)
     return StepResponse(observation=observation.model_dump(), reward=reward, done=done, info=info)
 
 
-@app.get("/state")
+@app.get("/state", dependencies=[Depends(_require_auth)])
 def state() -> Dict[str, Any]:
     return env.state()
 
 
-@app.post("/runs")
+@app.post("/runs", dependencies=[Depends(_require_auth)])
 def run_agent(request: RunRequest) -> Any:
     from agent import AgentRunner
 
@@ -122,7 +175,7 @@ def run_agent(request: RunRequest) -> Any:
     return result
 
 
-@app.get("/results/benchmarks/{benchmark_run_id}")
+@app.get("/results/benchmarks/{benchmark_run_id}", dependencies=[Depends(_require_auth)])
 def get_benchmark_result(benchmark_run_id: str) -> Any:
     result = _results_repository().get_benchmark(benchmark_run_id)
     if result is None:
@@ -130,12 +183,12 @@ def get_benchmark_result(benchmark_run_id: str) -> Any:
     return result
 
 
-@app.get("/results/benchmarks")
+@app.get("/results/benchmarks", dependencies=[Depends(_require_auth)])
 def list_benchmark_results(limit: int = 100) -> list[Any]:
     return _results_repository().list_benchmarks(max(1, min(limit, 500)))
 
 
-@app.get("/results/runs/{run_id}")
+@app.get("/results/runs/{run_id}", dependencies=[Depends(_require_auth)])
 def get_task_result(run_id: str) -> Any:
     result = _results_repository().get_run(run_id)
     if result is None:
@@ -143,7 +196,7 @@ def get_task_result(run_id: str) -> Any:
     return result
 
 
-@app.get("/results/runs")
+@app.get("/results/runs", dependencies=[Depends(_require_auth)])
 def list_task_results(
     agent: str | None = None,
     environment: str | None = None,
@@ -163,11 +216,11 @@ def list_task_results(
     return [record.model_dump() for record in records]
 
 
-@app.get("/results/agents/{agent}")
+@app.get("/results/agents/{agent}", dependencies=[Depends(_require_auth)])
 def get_agent_results(agent: str) -> list[Any]:
     return _results_repository().results_by_agent(agent)
 
 
-@app.get("/results/environments/{environment}")
+@app.get("/results/environments/{environment}", dependencies=[Depends(_require_auth)])
 def get_environment_results(environment: str, task: str | None = None) -> list[Any]:
     return _results_repository().results_by_environment_task(environment, task)
