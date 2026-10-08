@@ -1,4 +1,15 @@
-from .models import BenchmarkConfig, BenchmarkResult, BenchmarkSummary
+from .models import (
+    BenchmarkConfig,
+    BenchmarkResult,
+    BenchmarkSummary,
+    ComparisonResult,
+)
 from .runner import BenchmarkRunner
 
-__all__ = ["BenchmarkConfig", "BenchmarkResult", "BenchmarkRunner", "BenchmarkSummary"]
+__all__ = [
+    "BenchmarkConfig",
+    "BenchmarkResult",
+    "BenchmarkRunner",
+    "BenchmarkSummary",
+    "ComparisonResult",
+]

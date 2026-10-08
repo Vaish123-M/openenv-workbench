@@ -170,6 +170,49 @@ step counts, failures, invalid actions, elapsed time, timeout status, and
 provider model/token usage when available. Grading is populated from the
 environment's existing `score`, `reward`, `penalty`, and `breakdown` fields.
 
+## Multi-agent benchmark comparison
+
+The benchmark runner can execute the same tasks and evaluation settings for
+multiple registered agents. Agent/provider construction remains in the agent
+registry; benchmark configuration only names the registered agents:
+
+```python
+from benchmark import BenchmarkConfig, BenchmarkRunner
+
+comparison = BenchmarkRunner().run_comparison(
+    BenchmarkConfig(
+        environment="openenv",
+        task_ids=["email_classification"],
+        agents=["mock", "openai"],
+        runs=3,
+        max_steps=10,
+    )
+)
+
+for agent_name, summary in comparison.summaries.items():
+    print(agent_name, summary.success_rate, summary.average_score)
+```
+
+Each record includes the registered agent and observed model name when the
+agent exposes one. Per-agent summaries include success rate, average score,
+average steps, average execution time, failure rate, and timeout rate. A
+single agent failure is recorded in that agent's results without stopping
+other agents. Comparison results can be exported with
+`BenchmarkRunner.export_comparison_json` and
+`BenchmarkRunner.export_comparison_csv`.
+
+The CLI supports the same flow:
+
+```bash
+python -m benchmark.cli run \
+  --environment openenv \
+  --tasks email_classification \
+  --agents mock openai \
+  --runs 3 \
+  --output-json comparison.json \
+  --output-csv comparison.csv
+```
+
 The script logs exactly in this format for each task:
 
 ```text
