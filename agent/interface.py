@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Protocol, Sequence
+from typing import Any, Awaitable, Protocol, Sequence
 
 
 class Agent(Protocol):
@@ -8,6 +8,13 @@ class Agent(Protocol):
 
     def observe(self, observation: Any) -> Any:
         """Return the next action for an environment observation."""
+
+
+class AsyncAgent(Protocol):
+    """Interface for agents that may perform asynchronous work."""
+
+    async def aobserve(self, observation: Any) -> Any:
+        """Return the next action asynchronously."""
 
 
 class MockAgent:

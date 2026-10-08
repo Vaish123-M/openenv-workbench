@@ -24,6 +24,7 @@ class RunResult(BaseModel):
         "task_completed",
         "max_steps_reached",
         "timeout",
+        "cancelled",
         "agent_error",
         "environment_error",
         "invalid_action",

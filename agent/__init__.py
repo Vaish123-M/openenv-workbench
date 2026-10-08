@@ -1,11 +1,25 @@
-from .interface import Agent, MockAgent
-from .llm import LLMBackedAgent, LLMProvider, LLMProviderError, OpenAIProvider
+from .interface import Agent, AsyncAgent, MockAgent
+from .llm import (
+    AsyncLLMBackedAgent,
+    AsyncLLMProvider,
+    AsyncOpenAIProvider,
+    LLMBackedAgent,
+    LLMProvider,
+    LLMProviderError,
+    OpenAIProvider,
+)
 from .models import RunError, RunResult
-from .runner import AgentRunner
+from .runner import AgentRunner, AgentTimeoutError, EnvironmentTimeoutError
 
 __all__ = [
     "Agent",
     "AgentRunner",
+    "AgentTimeoutError",
+    "AsyncLLMBackedAgent",
+    "AsyncLLMProvider",
+    "AsyncOpenAIProvider",
+    "EnvironmentTimeoutError",
+    "AsyncAgent",
     "LLMBackedAgent",
     "LLMProvider",
     "LLMProviderError",

@@ -124,6 +124,12 @@ agent = LLMBackedAgent(OpenAIProvider())
 result = AgentRunner().run(OpenEnv(), agent, task_id="email_classification")
 ```
 
+For asynchronous agents/providers or environments, use
+`await AgentRunner().run_async(...)`. Awaitable calls are cancelled when the
+overall timeout expires, and external task cancellation is propagated after
+best-effort cleanup. Synchronous calls used through `run_async` remain
+non-preemptible because Python cannot safely interrupt a blocking call.
+
 The script logs exactly in this format for each task:
 
 ```text
