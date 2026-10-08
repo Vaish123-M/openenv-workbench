@@ -230,6 +230,25 @@ routes are available at `/results/benchmarks/{id}`, `/results/runs/{id}`,
 `/results/agents/{agent}`, and
 `/results/environments/{environment}?task={task_id}`.
 
+## React dashboard
+
+Phase 8 adds a small React/Vite dashboard in `frontend/`. It reads evaluation
+data only through the FastAPI result endpoints and never accesses SQLite
+directly.
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+With the API running on port 8000, the Vite development proxy serves the
+dashboard at `http://localhost:5173`. It provides summary metrics,
+agent/model comparisons, environment/task performance, benchmark history,
+filters, individual run details, trajectory inspection, and deterministic
+failure-analysis categories. Loading, empty, and error states are included.
+Build it with `npm run build`.
+
 The CLI supports the same flow:
 
 ```bash

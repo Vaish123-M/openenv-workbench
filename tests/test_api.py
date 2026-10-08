@@ -82,6 +82,8 @@ def test_result_retrieval_endpoints_return_persisted_run(monkeypatch, tmp_path) 
     by_agent = client.get("/results/agents/mock")
     assert by_agent.status_code == 200
     assert any(item["run_id"] == payload["run_id"] for item in by_agent.json())
+    assert client.get("/results/runs?agent=mock").status_code == 200
+    assert client.get("/results/benchmarks").status_code == 200
 
 
 def test_run_endpoint_requires_actions_for_mock_agent() -> None:

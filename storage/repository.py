@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from benchmark.models import BenchmarkResult, ComparisonResult
+from benchmark.models import BenchmarkRecord, BenchmarkResult, ComparisonResult
 from agent.models import RunResult
 
 
@@ -83,7 +83,11 @@ class ResultRepository:
         )
 
     def save_run(
-        self, result: RunResult, agent: str = "unknown", model_name: str | None = None
+        self,
+        result: RunResult,
+        agent: str = "unknown",
+        model_name: str | None = None,
+        environment: str | None = None,
     ) -> str:
         """Persist a standalone task run without requiring a benchmark."""
         from benchmark.models import BenchmarkRecord, BenchmarkResult, BenchmarkConfig
@@ -91,7 +95,7 @@ class ResultRepository:
         benchmark = BenchmarkResult(
             benchmark_run_id=result.run_id,
             config=BenchmarkConfig(
-                environment=result.environment,
+                environment=environment or result.environment,
                 task_ids=[result.task_id] if result.task_id else [],
                 agent=agent,
             ),
@@ -99,7 +103,7 @@ class ResultRepository:
                 BenchmarkRecord(
                     benchmark_run_id=result.run_id,
                     run_index=1,
-                    environment=result.environment,
+                    environment=environment or result.environment,
                     task_id=result.task_id or "",
                     agent=agent,
                     model_name=model_name or result.metrics.model_name,
@@ -166,6 +170,58 @@ class ResultRepository:
             "SELECT result_json FROM task_runs WHERE run_id = ?", (run_id,)
         ).fetchone()
         return RunResult.model_validate_json(row["result_json"]) if row else None
+
+    def list_benchmarks(self, limit: int = 100) -> list[dict[str, Any]]:
+        rows = self._connection.execute(
+            """
+            SELECT benchmark_run_id, kind, config_json, summary_json, created_at
+            FROM benchmark_runs ORDER BY created_at DESC LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+        return [
+            {
+                "benchmark_run_id": row["benchmark_run_id"],
+                "kind": row["kind"],
+                "config": json.loads(row["config_json"]),
+                "summary": json.loads(row["summary_json"]),
+                "created_at": row["created_at"],
+            }
+            for row in rows
+        ]
+
+    def list_records(
+        self,
+        agent: str | None = None,
+        environment: str | None = None,
+        task_id: str | None = None,
+        benchmark_run_id: str | None = None,
+        difficulty: str | None = None,
+        limit: int = 500,
+    ) -> list[BenchmarkRecord]:
+        clauses: list[str] = []
+        parameters: list[Any] = []
+        for column, value in (
+            ("agent", agent),
+            ("environment", environment),
+            ("task_id", task_id),
+            ("benchmark_run_id", benchmark_run_id),
+        ):
+            if value is not None:
+                clauses.append(f"{column} = ?")
+                parameters.append(value)
+        query = "SELECT record_json FROM task_runs"
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        query += " ORDER BY created_at DESC LIMIT ?"
+        parameters.append(limit)
+        records = [
+            BenchmarkRecord.model_validate_json(row["record_json"])
+            for row in self._connection.execute(query, tuple(parameters)).fetchall()
+        ]
+        if difficulty is not None:
+            records = [record for record in records if record.difficulty == difficulty]
+        return records
 
     def results_by_agent(self, agent: str) -> list[RunResult]:
         return self._runs(

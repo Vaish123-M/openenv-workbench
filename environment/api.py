@@ -114,7 +114,11 @@ def run_agent(request: RunRequest) -> Any:
         max_steps=request.max_steps,
         timeout=request.timeout,
     )
-    _results_repository().save_run(result, agent=request.agent)
+    _results_repository().save_run(
+        result,
+        agent=request.agent,
+        environment=request.environment,
+    )
     return result
 
 
@@ -126,12 +130,37 @@ def get_benchmark_result(benchmark_run_id: str) -> Any:
     return result
 
 
+@app.get("/results/benchmarks")
+def list_benchmark_results(limit: int = 100) -> list[Any]:
+    return _results_repository().list_benchmarks(max(1, min(limit, 500)))
+
+
 @app.get("/results/runs/{run_id}")
 def get_task_result(run_id: str) -> Any:
     result = _results_repository().get_run(run_id)
     if result is None:
         raise HTTPException(status_code=404, detail="Task run not found")
     return result
+
+
+@app.get("/results/runs")
+def list_task_results(
+    agent: str | None = None,
+    environment: str | None = None,
+    task: str | None = None,
+    benchmark_run: str | None = None,
+    difficulty: str | None = None,
+    limit: int = 500,
+) -> list[Any]:
+    records = _results_repository().list_records(
+        agent=agent,
+        environment=environment,
+        task_id=task,
+        benchmark_run_id=benchmark_run,
+        difficulty=difficulty,
+        limit=max(1, min(limit, 1000)),
+    )
+    return [record.model_dump() for record in records]
 
 
 @app.get("/results/agents/{agent}")
