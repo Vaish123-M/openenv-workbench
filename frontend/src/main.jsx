@@ -27,6 +27,73 @@ function MetricCard({ label, value, tone = "" }) {
   );
 }
 
+function scoreFor(record) {
+  return record.result?.grading?.score || 0;
+}
+
+function downloadCsv(records) {
+  const headers = ["run_id", "agent", "model", "environment", "task", "difficulty", "completed", "score", "steps", "elapsed_seconds", "termination"];
+  const rows = records.map((record) => [
+    record.result?.run_id,
+    record.agent,
+    record.model_name || "",
+    record.environment,
+    record.task_id,
+    record.difficulty || "",
+    record.result?.completed,
+    scoreFor(record),
+    record.result?.steps || 0,
+    record.result?.metrics?.elapsed_time || 0,
+    record.result?.termination_reason || "",
+  ]);
+  const csv = [headers, ...rows].map((row) => row.map((value) => `"${String(value ?? "").replaceAll('"', '""')}"`).join(",")).join("\n");
+  const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `openenv-runs-${new Date().toISOString().slice(0, 10)}.csv`;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+function TrendChart({ records }) {
+  const points = records.slice().reverse().slice(-12);
+  if (points.length < 2) return <EmptyState>Run at least two evaluations to see a quality trend.</EmptyState>;
+  const width = 760;
+  const height = 180;
+  const chartPoints = points.map((record, index) => {
+    const x = 18 + (index / (points.length - 1)) * (width - 36);
+    const y = height - 24 - scoreFor(record) * (height - 48);
+    return `${x},${y}`;
+  }).join(" ");
+  return <div className="trend-chart">
+    <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Evaluation score trend">
+      <defs><linearGradient id="trend-fill" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stopColor="#43d6a2" stopOpacity=".28" /><stop offset="100%" stopColor="#43d6a2" stopOpacity="0" /></linearGradient></defs>
+      {[0, .5, 1].map((value) => <line key={value} x1="18" x2={width - 18} y1={height - 24 - value * (height - 48)} y2={height - 24 - value * (height - 48)} className="chart-grid" />)}
+      <polyline points={`18,${height - 24} ${chartPoints} ${width - 18},${height - 24}`} className="chart-area" />
+      <polyline points={chartPoints} className="chart-line" />
+      {points.map((record, index) => {
+        const [x, y] = chartPoints.split(" ")[index].split(",");
+        return <circle key={record.result?.run_id} cx={x} cy={y} r="4" className="chart-point"><title>{`${record.task_id}: ${formatPercent(scoreFor(record))}`}</title></circle>;
+      })}
+    </svg>
+    <div className="chart-labels"><span>Older runs</span><strong>Score signal</strong><span>Latest runs</span></div>
+  </div>;
+}
+
+function QualitySignal({ records }) {
+  const total = records.length;
+  const successful = records.filter((record) => record.result?.completed).length;
+  const successRate = total ? successful / total : 0;
+  const avgScore = total ? records.reduce((sum, record) => sum + scoreFor(record), 0) / total : 0;
+  const signal = successRate >= .8 && avgScore >= .8 ? "Strong and reliable" : successRate >= .5 ? "Promising, needs iteration" : "Needs investigation";
+  const tone = successRate >= .8 && avgScore >= .8 ? "positive" : successRate >= .5 ? "neutral" : "negative";
+  return <div className={`quality-signal ${tone}`}>
+    <div className="signal-ring"><strong>{formatPercent(avgScore)}</strong><span>quality</span></div>
+    <div><p className="eyebrow">Quality signal</p><h3>{signal}</h3><p>{successful} of {total} evaluations completed successfully. Use the run explorer below to inspect the exact trajectory behind every result.</p></div>
+    <div className="signal-meta"><span>Reliability</span><strong>{formatPercent(successRate)}</strong></div>
+  </div>;
+}
+
 function EmptyState({ children = "No evaluation data is available yet." }) {
   return <div className="empty-state">{children}</div>;
 }
@@ -70,7 +137,7 @@ function Summary({ records }) {
   const total = records.length;
   const successful = records.filter((record) => record.result?.completed).length;
   const timeouts = records.filter((record) => record.result?.metrics?.timed_out).length;
-  const score = records.reduce((sum, record) => sum + (record.result?.grading?.score || 0), 0);
+  const score = records.reduce((sum, record) => sum + scoreFor(record), 0);
   const steps = records.reduce((sum, record) => sum + (record.result?.steps || 0), 0);
   const elapsed = records.reduce((sum, record) => sum + (record.result?.metrics?.elapsed_time || 0), 0);
   return (
@@ -104,7 +171,7 @@ function ComparisonTable({ records }) {
           return <tr key={name}>
             <td><strong>{name}</strong><small>{rows.find((row) => row.model_name)?.model_name || "model not reported"}</small></td>
             <td>{formatPercent(success / rows.length)}</td>
-            <td>{formatNumber(rows.reduce((sum, row) => sum + (row.result?.grading?.score || 0), 0) / rows.length)}</td>
+            <td>{formatNumber(rows.reduce((sum, row) => sum + scoreFor(row), 0) / rows.length)}</td>
             <td>{formatNumber(rows.reduce((sum, row) => sum + (row.result?.steps || 0), 0) / rows.length, 1)}</td>
             <td>{formatNumber(rows.reduce((sum, row) => sum + (row.result?.metrics?.elapsed_time || 0), 0) / rows.length, 3)}s</td>
             <td>{failures}</td>
@@ -130,7 +197,7 @@ function PerformanceTable({ records }) {
         <tbody>{groups.map((group) => <tr key={`${group.environment}:${group.task}`}>
           <td>{group.environment}</td><td>{group.task}</td><td>{group.records.length}</td>
           <td>{formatPercent(group.records.filter((row) => row.result?.completed).length / group.records.length)}</td>
-          <td>{formatNumber(group.records.reduce((sum, row) => sum + (row.result?.grading?.score || 0), 0) / group.records.length)}</td>
+          <td>{formatNumber(group.records.reduce((sum, row) => sum + scoreFor(row), 0) / group.records.length)}</td>
         </tr>)}</tbody>
       </table>
     </div>
@@ -177,6 +244,8 @@ function App() {
   const [error, setError] = React.useState("");
   const [credentials, setCredentials] = React.useState(null);
   const [login, setLogin] = React.useState({ username: "", password: "" });
+  const [query, setQuery] = React.useState("");
+  const [darkMode, setDarkMode] = React.useState(() => localStorage.getItem("openenv-theme") === "dark");
 
   const load = React.useCallback(async () => {
     setStatus("loading");
@@ -198,13 +267,29 @@ function App() {
   }, [credentials]);
 
   React.useEffect(() => { load(); }, [load]);
+  React.useEffect(() => {
+    document.documentElement.dataset.theme = darkMode ? "dark" : "light";
+    localStorage.setItem("openenv-theme", darkMode ? "dark" : "light");
+  }, [darkMode]);
+  React.useEffect(() => {
+    const onKeyDown = (event) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        document.querySelector("#run-search")?.focus();
+      }
+      if (event.key === "Escape") document.querySelector("#run-search")?.blur();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
   const updateFilter = (key, value) => setFilters((current) => ({ ...current, [key]: value }));
   const filtered = records.filter((record) =>
     (!filters.agent || record.agent === filters.agent) &&
     (!filters.environment || record.environment === filters.environment) &&
     (!filters.task || record.task_id === filters.task) &&
     (!filters.difficulty || record.difficulty === filters.difficulty) &&
-    (!filters.benchmark_run || record.benchmark_run_id === filters.benchmark_run)
+    (!filters.benchmark_run || record.benchmark_run_id === filters.benchmark_run) &&
+    (!query || [record.task_id, record.agent, record.environment, record.model_name].filter(Boolean).join(" ").toLowerCase().includes(query.toLowerCase()))
   );
 
   if (status === "error" && error.includes("(401)")) {
@@ -220,15 +305,17 @@ function App() {
     </section></main>;
   }
   return <main className="app-shell">
-    <header className="topbar"><div><p className="eyebrow">OpenEnv Workbench</p><h1>Evaluation dashboard</h1></div><button className="refresh-button" onClick={load}>Refresh data</button></header>
+    <header className="topbar"><div className="brand-lockup"><div className="brand-mark">O</div><div><p className="eyebrow">OpenEnv Workbench <span className="live-dot">● live</span></p><h1>Evaluation observatory</h1><p className="subtitle">Make every agent decision measurable.</p></div></div><div className="top-actions"><button className="icon-button" aria-label="Toggle dark mode" onClick={() => setDarkMode((value) => !value)}>{darkMode ? "☀" : "◐"}</button><button className="refresh-button" onClick={load}>↻ Refresh</button></div></header>
     {status === "loading" && <div className="state-panel">Loading evaluation results…</div>}
     {status === "error" && <div className="state-panel error-state">Could not load results: {error}<button onClick={load}>Retry</button></div>}
     {status === "ready" && <>
+      <QualitySignal records={filtered} />
       <section className="panel"><div className="section-heading"><div><p className="eyebrow">Overview</p><h2>Benchmark summary</h2></div><span className="run-count">{filtered.length} runs</span></div><Summary records={filtered} /></section>
+      <section className="panel"><div className="section-heading"><div><p className="eyebrow">Signal over time</p><h2>Quality trend</h2></div><span className="chart-legend"><i /> score</span></div><TrendChart records={filtered} /></section>
       <section className="panel"><div className="section-heading"><div><p className="eyebrow">Compare</p><h2>Agent and model performance</h2></div></div><ComparisonTable records={filtered} /></section>
       <section className="panel"><div className="section-heading"><div><p className="eyebrow">Coverage</p><h2>Environment and task performance</h2></div></div><PerformanceTable records={filtered} /></section>
       <section className="panel"><div className="section-heading"><div><p className="eyebrow">History</p><h2>Benchmark runs</h2></div></div><Filters values={filters} onChange={updateFilter} benchmarks={benchmarks} /><div className="history">{benchmarks.map((benchmark) => <div className="history-row" key={benchmark.benchmark_run_id}><span>{new Date(benchmark.created_at).toLocaleString()}</span><code>{benchmark.benchmark_run_id.slice(0, 12)}</code><span>{benchmark.kind}</span><strong>{benchmark.summary?.success_rate !== undefined ? formatPercent(benchmark.summary.success_rate) : "Comparison"}</strong></div>)}</div></section>
-      <section className="panel"><div className="section-heading"><div><p className="eyebrow">Runs</p><h2>Individual evaluations</h2></div></div>{filtered.length ? <div className="run-list">{filtered.map((record) => <button className="run-row" key={record.result.run_id} onClick={() => setSelected(record)}><span><strong>{record.task_id || "Untitled task"}</strong><small>{record.environment} · {record.agent}</small></span><span>{formatNumber(record.result.grading?.score)}</span><span className={record.result.completed ? "status-success" : "status-failure"}>{record.result.termination_reason}</span></button>)}</div> : <EmptyState />}</section>
+      <section className="panel"><div className="section-heading"><div><p className="eyebrow">Runs</p><h2>Individual evaluations</h2></div><button className="export-button" onClick={() => downloadCsv(filtered)} disabled={!filtered.length}>↓ Export CSV</button></div><div className="search-row"><label className="search-box"><span>⌕</span><input id="run-search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search task, agent, or environment" /><kbd>Ctrl K</kbd></label><span className="run-count">{filtered.length} matching</span></div>{filtered.length ? <div className="run-list">{filtered.map((record) => <button className="run-row" key={record.result.run_id} onClick={() => setSelected(record)}><span className="run-index">#{String(record.result.run_id).slice(0, 6)}</span><span><strong>{record.task_id || "Untitled task"}</strong><small>{record.environment} · {record.agent}</small></span><span className="run-score">{formatNumber(record.result.grading?.score)}</span><span className={record.result.completed ? "status-success" : "status-failure"}>{record.result.termination_reason}</span><span className="row-arrow">→</span></button>)}</div> : <EmptyState />}</section>
     </>}
     {selected && <RunDetails record={selected} onClose={() => setSelected(null)} />}
   </main>;

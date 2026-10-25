@@ -6,6 +6,12 @@ execution path from observation to action, deterministic grading, structured
 metrics, trajectory capture, benchmark comparison, persistence, and a focused
 React dashboard.
 
+The dashboard is designed as an evaluation observatory: it includes a quality
+signal summary, score trend chart, keyboard-friendly run search (`Ctrl/Cmd+K`),
+dark mode, filter-aware CSV export, and an inspection drawer for the complete
+trajectory behind each result. These features make benchmark reviews
+presentation-ready while keeping the underlying measurements reproducible.
+
 ## Why it exists
 
 Agent demos often make it difficult to answer basic engineering questions:
