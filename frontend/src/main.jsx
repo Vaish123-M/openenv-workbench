@@ -225,6 +225,57 @@ function Summary({ records }) {
   );
 }
 
+function benchmarkStats(records, benchmarkId) {
+  const rows = records.filter((record) => record.benchmark_run_id === benchmarkId);
+  const total = rows.length;
+  return {
+    total,
+    success: total ? rows.filter((record) => record.result?.completed).length / total : 0,
+    score: total ? rows.reduce((sum, record) => sum + scoreFor(record), 0) / total : 0,
+    steps: total ? rows.reduce((sum, record) => sum + (record.result?.steps || 0), 0) / total : 0,
+    time: total ? rows.reduce((sum, record) => sum + (record.result?.metrics?.elapsed_time || 0), 0) / total : 0,
+    failures: rows.reduce((sum, record) => sum + (record.result?.failure?.categories?.length || 0), 0),
+  };
+}
+
+function Delta({ value, inverse = false, formatter = formatPercent }) {
+  const improved = inverse ? value < 0 : value > 0;
+  return <span className={`delta ${value === 0 ? "flat" : improved ? "improved" : "regressed"}`}>{value > 0 ? "+" : ""}{formatter(value)}</span>;
+}
+
+function ExperimentComparison({ benchmarks, records }) {
+  const available = benchmarks.filter((benchmark) => records.some((record) => record.benchmark_run_id === benchmark.benchmark_run_id));
+  const [baseline, setBaseline] = React.useState("");
+  const [candidate, setCandidate] = React.useState("");
+  React.useEffect(() => {
+    if (available.length >= 2) {
+      setCandidate((current) => current || available[0].benchmark_run_id);
+      setBaseline((current) => current || available[1].benchmark_run_id);
+    }
+  }, [available.length, available[0]?.benchmark_run_id, available[1]?.benchmark_run_id]);
+  if (available.length < 2) return null;
+  const left = benchmarkStats(records, baseline);
+  const right = benchmarkStats(records, candidate);
+  const scoreDelta = right.score - left.score;
+  const successDelta = right.success - left.success;
+  const regression = scoreDelta < -.05 || successDelta < -.1;
+  return <section className="panel comparison-panel">
+    <div className="section-heading"><div><p className="eyebrow">Experiment review</p><h2>Compare benchmark runs</h2><p className="section-help">Quantify whether a new change improved agent quality or introduced a regression.</p></div><span className={`comparison-badge ${regression ? "regression" : "healthy"}`}>{regression ? "⚠ regression detected" : "✓ no regression"}</span></div>
+    <div className="comparison-selectors">
+      <label>Baseline<select value={baseline} onChange={(event) => setBaseline(event.target.value)}>{available.map((item) => <option key={item.benchmark_run_id} value={item.benchmark_run_id}>{item.benchmark_run_id.slice(0, 10)} · {item.kind}</option>)}</select></label>
+      <span className="versus">vs</span>
+      <label>Candidate<select value={candidate} onChange={(event) => setCandidate(event.target.value)}>{available.map((item) => <option key={item.benchmark_run_id} value={item.benchmark_run_id}>{item.benchmark_run_id.slice(0, 10)} · {item.kind}</option>)}</select></label>
+    </div>
+    <div className="comparison-grid">
+      <div><span>Average score</span><strong>{formatNumber(left.score)} → {formatNumber(right.score)}</strong><Delta value={scoreDelta} /></div>
+      <div><span>Success rate</span><strong>{formatPercent(left.success)} → {formatPercent(right.success)}</strong><Delta value={successDelta} /></div>
+      <div><span>Average steps</span><strong>{formatNumber(left.steps, 1)} → {formatNumber(right.steps, 1)}</strong><Delta value={right.steps - left.steps} inverse formatter={(value) => formatNumber(value, 1)} /></div>
+      <div><span>Execution time</span><strong>{formatNumber(left.time, 3)}s → {formatNumber(right.time, 3)}s</strong><Delta value={right.time - left.time} inverse formatter={(value) => `${formatNumber(value, 3)}s`} /></div>
+    </div>
+    <p className="comparison-footnote">{right.total} candidate runs vs {left.total} baseline runs · {right.failures} candidate failure categories recorded</p>
+  </section>;
+}
+
 function ComparisonTable({ records }) {
   const groups = Object.values(records.reduce((result, record) => {
     const name = record.agent || "unknown";
@@ -384,6 +435,7 @@ function App() {
     {status === "ready" && <>
       <RunEvaluation credentials={credentials} onComplete={load} />
       <QualitySignal records={filtered} />
+      <ExperimentComparison benchmarks={benchmarks} records={records} />
       <section className="panel"><div className="section-heading"><div><p className="eyebrow">Overview</p><h2>Benchmark summary</h2></div><span className="run-count">{filtered.length} runs</span></div><Summary records={filtered} /></section>
       <section className="panel"><div className="section-heading"><div><p className="eyebrow">Signal over time</p><h2>Quality trend</h2></div><span className="chart-legend"><i /> score</span></div><TrendChart records={filtered} /></section>
       <section className="panel"><div className="section-heading"><div><p className="eyebrow">Compare</p><h2>Agent and model performance</h2></div></div><ComparisonTable records={filtered} /></section>
