@@ -18,6 +18,21 @@ async function getJson(path, credentials) {
   return response.json();
 }
 
+async function postJson(path, body, credentials) {
+  const headers = {
+    "Content-Type": "application/json",
+    ...(credentials?.username ? { Authorization: `Basic ${btoa(`${credentials.username}:${credentials.password}`)}` } : {}),
+  };
+  const response = await fetch(`${API_BASE}${path}`, { method: "POST", headers, body: JSON.stringify(body) });
+  if (!response.ok) {
+    const detail = await response.json().catch(() => null);
+    const error = new Error(detail?.detail || `Request failed (${response.status})`);
+    error.status = response.status;
+    throw error;
+  }
+  return response.json();
+}
+
 function MetricCard({ label, value, tone = "" }) {
   return (
     <article className={`metric-card ${tone}`}>
@@ -131,6 +146,64 @@ function Filters({ values, onChange, benchmarks }) {
       </label>
     </div>
   );
+}
+
+function RunEvaluation({ credentials, onComplete }) {
+  const [form, setForm] = React.useState({
+    environment: "openenv",
+    task: "email_classification",
+    agent: "mock",
+    max_steps: 10,
+    timeout: "",
+    actions: '[\n  {\n    "content": "{\\"label\\": \\"spam\\", \\"reason\\": \\"Verify suspension card click immediately form.\\}",\n    "format": "json"\n  }\n]',
+  });
+  const [runStatus, setRunStatus] = React.useState("idle");
+  const [runError, setRunError] = React.useState("");
+
+  const update = (key, value) => setForm((current) => ({ ...current, [key]: value }));
+  const submit = async (event) => {
+    event.preventDefault();
+    setRunStatus("running");
+    setRunError("");
+    try {
+      let actions;
+      if (form.agent === "mock") {
+        try {
+          actions = JSON.parse(form.actions);
+        } catch {
+          throw new Error("Actions must be valid JSON.");
+        }
+        if (!Array.isArray(actions) || !actions.length) throw new Error("Add at least one mock action.");
+      }
+      const payload = {
+        environment: form.environment,
+        task: form.task,
+        agent: form.agent,
+        max_steps: Number(form.max_steps),
+        ...(form.timeout ? { timeout: Number(form.timeout) } : {}),
+        ...(actions ? { actions } : {}),
+      };
+      await postJson("/runs", payload, credentials);
+      setRunStatus("success");
+      onComplete();
+    } catch (error) {
+      setRunStatus("error");
+      setRunError(error.message);
+    }
+  };
+  return <section className="panel run-panel">
+    <div className="section-heading"><div><p className="eyebrow">Execute</p><h2>Run a new evaluation</h2><p className="section-help">Use the same controlled runner as the CLI, then inspect the result in the dashboard.</p></div><span className={`run-state ${runStatus}`}>{runStatus === "running" ? "● running" : runStatus === "success" ? "✓ completed" : "● ready"}</span></div>
+    <form className="run-form" onSubmit={submit}>
+      <label>Environment<select value={form.environment} onChange={(event) => update("environment", event.target.value)}><option value="openenv">OpenEnv tasks</option><option value="coding">Coding tasks</option></select></label>
+      <label>Task<select value={form.task} onChange={(event) => update("task", event.target.value)}><option value="email_classification">Email classification</option><option value="data_cleaning">Data cleaning</option><option value="customer_support_reply">Customer support reply</option><option value="fix_addition">Fix addition</option><option value="fix_email_normalization">Fix email normalization</option><option value="fix_safe_division">Fix safe division</option></select></label>
+      <label>Agent<select value={form.agent} onChange={(event) => update("agent", event.target.value)}><option value="mock">Mock agent (deterministic)</option><option value="openai">OpenAI agent</option></select></label>
+      <label>Max steps<input type="number" min="1" max="100" value={form.max_steps} onChange={(event) => update("max_steps", event.target.value)} /></label>
+      <label>Timeout (seconds)<input type="number" min="0.1" step="0.1" placeholder="Optional" value={form.timeout} onChange={(event) => update("timeout", event.target.value)} /></label>
+      {form.agent === "mock" && <label className="action-editor">Mock actions (JSON)<textarea value={form.actions} onChange={(event) => update("actions", event.target.value)} spellCheck="false" /></label>}
+      <div className="run-form-footer"><span className="form-hint">Results are persisted to SQLite and appear in history automatically.</span><button className="refresh-button" type="submit" disabled={runStatus === "running"}>{runStatus === "running" ? "Running evaluation…" : "▶ Run evaluation"}</button></div>
+    </form>
+    {runError && <p className="error-text form-error">{runError}</p>}
+  </section>;
 }
 
 function Summary({ records }) {
@@ -309,6 +382,7 @@ function App() {
     {status === "loading" && <div className="state-panel">Loading evaluation results…</div>}
     {status === "error" && <div className="state-panel error-state">Could not load results: {error}<button onClick={load}>Retry</button></div>}
     {status === "ready" && <>
+      <RunEvaluation credentials={credentials} onComplete={load} />
       <QualitySignal records={filtered} />
       <section className="panel"><div className="section-heading"><div><p className="eyebrow">Overview</p><h2>Benchmark summary</h2></div><span className="run-count">{filtered.length} runs</span></div><Summary records={filtered} /></section>
       <section className="panel"><div className="section-heading"><div><p className="eyebrow">Signal over time</p><h2>Quality trend</h2></div><span className="chart-legend"><i /> score</span></div><TrendChart records={filtered} /></section>
